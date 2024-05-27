@@ -97,7 +97,7 @@ func (h *Host) Serve(ctx context.Context) error {
 			},
 		}
 
-		if err := h.cfg.DataStream.PutRecord(ctx, evt); err != nil {
+		if err := h.cfg.DataStream.PutEvent(ctx, evt); err != nil {
 			slog.Warn("Failed to put event payload", tele.LogAttrError(err))
 			return
 		}
@@ -283,7 +283,7 @@ func (h *Host) TracedTopicHandler(handler TopicHandler) TopicHandler {
 			},
 		}
 
-		if err := h.cfg.DataStream.PutRecord(ctx, evt); err != nil {
+		if err := h.cfg.DataStream.PutEvent(ctx, evt); err != nil {
 			slog.Warn("failed putting topic handler event", tele.LogAttrError(err))
 		}
 
@@ -328,6 +328,6 @@ func (h *Host) UpdatePeerScore(scores map[peer.ID]*pubsub.PeerScoreSnapshot) {
 
 		traceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		h.cfg.DataStream.PutRecord(traceCtx, trace)
+		h.cfg.DataStream.PutEvent(traceCtx, trace)
 	}
 }
