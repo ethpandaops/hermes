@@ -23,6 +23,8 @@ func cmdEthChainsAction(c *cli.Context) error {
 		params.MainnetName,
 		params.SepoliaName,
 		params.HoleskyName,
+		params.HoodiName,
+		eth.GnosisName,
 	}
 
 	slog.Info("Supported chains:")
@@ -39,6 +41,7 @@ func cmdEthChainsAction(c *cli.Context) error {
 			config.Beacon.BellatrixForkVersion,
 			config.Beacon.CapellaForkVersion,
 			config.Beacon.DenebForkVersion,
+			config.Beacon.ElectraForkVersion,
 		}
 
 		for _, forkVersion := range forkVersions {
