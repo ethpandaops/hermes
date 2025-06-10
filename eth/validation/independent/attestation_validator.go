@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 )
@@ -19,9 +20,15 @@ func NewStandardAttestationValidator(iv *IndependentValidator) *StandardAttestat
 }
 
 func (v *StandardAttestationValidator) Validate(ctx context.Context, data []byte, topic string) error {
+	// Decompress the snappy-compressed data
+	decompressed, err := snappy.Decode(nil, data)
+	if err != nil {
+		return errors.Wrap(err, "failed to decompress snappy data")
+	}
+	
 	// Decode the attestation
 	attestation := &ethpb.Attestation{}
-	if err := attestation.UnmarshalSSZ(data); err != nil {
+	if err := attestation.UnmarshalSSZ(decompressed); err != nil {
 		return errors.Wrap(err, "failed to decode attestation")
 	}
 

@@ -7,8 +7,9 @@ import (
 	"crypto/sha256"
 	"fmt"
 
+	"github.com/golang/snappy"
 	"github.com/pkg/errors"
-	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
+	"github.com/attestantio/go-eth2-client/spec/deneb"
 )
 
 // BlobSidecarValidator validates blob sidecar messages with KZG proofs
@@ -31,9 +32,15 @@ func NewBlobSidecarValidator(iv *IndependentValidator) (*BlobSidecarValidator, e
 }
 
 func (v *BlobSidecarValidator) Validate(ctx context.Context, data []byte, topic string) error {
-	// Decode the blob sidecar
-	sidecar := &ethpb.BlobSidecar{}
-	if err := sidecar.UnmarshalSSZ(data); err != nil {
+	// Decompress the snappy-compressed data
+	decompressed, err := snappy.Decode(nil, data)
+	if err != nil {
+		return errors.Wrap(err, "failed to decompress snappy data")
+	}
+	
+	// Decode the blob sidecar using consensus-spec types
+	sidecar := &deneb.BlobSidecar{}
+	if err := sidecar.UnmarshalSSZ(decompressed); err != nil {
 		return errors.Wrap(err, "failed to decode blob sidecar")
 	}
 
@@ -60,144 +67,91 @@ func (v *BlobSidecarValidator) Validate(ctx context.Context, data []byte, topic 
 	return nil
 }
 
-func (v *BlobSidecarValidator) verifyKZGProof(sidecar *ethpb.BlobSidecar) error {
-	// Convert types for KZG library
-	if len(sidecar.Blob) != 131072 { // 4096 * 32 bytes
-		return fmt.Errorf("invalid blob size: %d", len(sidecar.Blob))
+func (v *BlobSidecarValidator) verifyKZGProof(sidecar *deneb.BlobSidecar) error {
+	// Verify the KZG proof
+	err := v.kzgVerifier.VerifyBlobKZGProof(sidecar.Blob[:], sidecar.KZGCommitment[:], sidecar.KZGProof[:])
+	if err != nil {
+		return errors.Wrap(err, "failed to verify KZG proof")
 	}
-
-	if len(sidecar.KzgCommitment) != 48 {
-		return fmt.Errorf("invalid commitment size: %d", len(sidecar.KzgCommitment))
-	}
-
-	if len(sidecar.KzgProof) != 48 {
-		return fmt.Errorf("invalid proof size: %d", len(sidecar.KzgProof))
-	}
-
-	// Verify KZG proof
-	if err := v.kzgVerifier.VerifyBlobSidecarKZG(
-		sidecar.Blob,
-		sidecar.KzgCommitment,
-		sidecar.KzgProof,
-		sidecar.CommitmentInclusionProof,
-	); err != nil {
-		return errors.Wrap(err, "KZG verification failed")
-	}
-
+	
 	return nil
 }
 
-func (v *BlobSidecarValidator) verifyInclusionProof(sidecar *ethpb.BlobSidecar) error {
-	// Get the block header to verify commitment inclusion
-	if sidecar.SignedBlockHeader == nil || sidecar.SignedBlockHeader.Header == nil {
-		return errors.New("missing signed block header")
+func (v *BlobSidecarValidator) verifyInclusionProof(sidecar *deneb.BlobSidecar) error {
+	// Verify the inclusion proof that proves the KZG commitment is in the beacon block
+	
+	// First, hash the KZG commitment
+	commitmentHash := sha256.Sum256(sidecar.KZGCommitment[:])
+	
+	// Build the Merkle branch
+	branch := make([][]byte, len(sidecar.KZGCommitmentInclusionProof))
+	for i, proof := range sidecar.KZGCommitmentInclusionProof {
+		branch[i] = proof[:]
 	}
 	
-	blockHeader := sidecar.SignedBlockHeader.Header
+	// The leaf is at index = blob_index + NUMBER_OF_COLUMNS
+	// For mainnet, NUMBER_OF_COLUMNS = 0, so leaf_index = blob_index
+	leafIndex := uint64(sidecar.Index)
 	
-	// Basic validation
-	if sidecar.Index >= common.MAX_BLOBS_PER_BLOCK {
-		return fmt.Errorf("blob index out of range: %d", sidecar.Index)
+	// Verify the Merkle proof
+	// This proves that the commitment at blob_index is included in the beacon block body
+	if !verifyMerkleBranch(commitmentHash[:], branch, 17, leafIndex, sidecar.SignedBlockHeader.Message.BodyRoot[:]) { // KZG commitments depth is 17
+		return errors.New("invalid inclusion proof")
 	}
-
-	// Verify the block header matches expected slot
-	if blockHeader.Slot != sidecar.SignedBlockHeader.Header.Slot {
-		return errors.New("inconsistent slot in signed block header")
-	}
-
-	// Verify inclusion proof if provided
-	if len(sidecar.CommitmentInclusionProof) > 0 {
-		if !v.verifyMerkleProof(
-			sidecar.KzgCommitment,
-			sidecar.CommitmentInclusionProof,
-			blockHeader.BodyRoot,
-			sidecar.Index,
-		) {
-			return errors.New("invalid KZG commitment inclusion proof")
-		}
-	}
-
+	
 	return nil
 }
 
-func (v *BlobSidecarValidator) verifyProposerSignature(sidecar *ethpb.BlobSidecar) error {
+func (v *BlobSidecarValidator) verifyProposerSignature(sidecar *deneb.BlobSidecar) error {
+	// Get current state instead of parent state
+	state := v.validator.stateSync.GetCurrentState()
+	if state == nil {
+		return errors.New("current state not available")
+	}
+	
+	// Get the proposer index
+	proposerIndex := sidecar.SignedBlockHeader.Message.ProposerIndex
+	
 	// Get the proposer's public key
-	proposerIndex := sidecar.SignedBlockHeader.Header.ProposerIndex
-	proposer, err := v.validator.stateSync.GetValidator(proposerIndex)
-	if err != nil {
-		return errors.Wrapf(err, "proposer %d not found", proposerIndex)
-	}
-
-	// Get current state for domain computation
-	currentState := v.validator.stateSync.GetCurrentState()
-	if currentState == nil {
-		return errors.New("no beacon state available")
+	validatorInfo, exists := state.Validators[common.ValidatorIndex(proposerIndex)]
+	if !exists {
+		return fmt.Errorf("proposer %d not found in validator set", proposerIndex)
 	}
 	
-	// Compute domain
-	epoch := common.SlotToEpoch(sidecar.SignedBlockHeader.Header.Slot)
-	domain, err := common.ComputeDomain(
-		common.DomainBeaconProposer,
-		currentState.Fork,
-		currentState.GenesisValidatorsRoot,
-	)
+	// Serialize the block header for signing
+	headerBytes, err := sidecar.SignedBlockHeader.Message.MarshalSSZ()
 	if err != nil {
-		return errors.Wrap(err, "failed to compute domain")
+		return errors.Wrap(err, "failed to serialize block header")
 	}
 	
-	// Verify the block header signature
-	signingRoot, err := common.ComputeSigningRoot(sidecar.SignedBlockHeader.Header, domain)
-	if err != nil {
-		return errors.Wrap(err, "failed to compute signing root")
-	}
-	
+	// Verify the signature
 	return v.validator.signatureVerifier.VerifySignature(
-		proposer.PublicKey,
-		signingRoot[:],
-		sidecar.SignedBlockHeader.Signature,
+		validatorInfo.PublicKey, 
+		headerBytes, 
+		sidecar.SignedBlockHeader.Signature[:],
 		common.DomainBeaconProposer,
-		epoch,
+		state.Epoch,
 	)
 }
 
-func (v *BlobSidecarValidator) verifyMerkleProof(
-	leaf []byte,
-	proof [][]byte,
-	root []byte,
-	index uint64,
-) bool {
-	// Simplified merkle proof verification
-	// In production, this would properly verify the merkle path
-	
-	if len(proof) == 0 {
-		return false
-	}
-
-	// Start with the leaf hash
-	currentHash := hashData(leaf)
-
-	// Apply each proof element
-	for i, proofElement := range proof {
-		if len(proofElement) != 32 {
-			return false
-		}
-
-		// Determine if we're the left or right child
-		if (index>>uint(i))&1 == 0 {
-			// We're the left child
-			currentHash = hashData(append(currentHash[:], proofElement...))
+// Helper function to verify a Merkle branch
+func verifyMerkleBranch(leaf []byte, branch [][]byte, depth uint64, index uint64, root []byte) bool {
+	value := leaf
+	for i := uint64(0); i < depth; i++ {
+		if (index>>i)&1 == 1 {
+			value = hashTreeRoot(branch[i], value)
 		} else {
-			// We're the right child
-			currentHash = hashData(append(proofElement, currentHash[:]...))
+			value = hashTreeRoot(value, branch[i])
 		}
 	}
-
-	// Compare with expected root
-	return bytes.Equal(currentHash[:], root)
+	return bytes.Equal(value, root)
 }
 
-func hashData(data []byte) [32]byte {
-	return sha256.Sum256(data)
+// Helper function to compute hash tree root of two values
+func hashTreeRoot(a, b []byte) []byte {
+	hasher := sha256.New()
+	hasher.Write(a)
+	hasher.Write(b)
+	return hasher.Sum(nil)
 }
-
 

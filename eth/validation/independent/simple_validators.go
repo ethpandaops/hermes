@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
@@ -22,9 +23,15 @@ func NewVoluntaryExitValidator(iv *IndependentValidator) *VoluntaryExitValidator
 }
 
 func (v *VoluntaryExitValidator) Validate(ctx context.Context, data []byte, topic string) error {
+	// Decompress the snappy-compressed data
+	decompressed, err := snappy.Decode(nil, data)
+	if err != nil {
+		return errors.Wrap(err, "failed to decompress snappy data")
+	}
+	
 	// Decode the signed voluntary exit
 	exit := &ethpb.SignedVoluntaryExit{}
-	if err := exit.UnmarshalSSZ(data); err != nil {
+	if err := exit.UnmarshalSSZ(decompressed); err != nil {
 		return errors.Wrap(err, "failed to decode voluntary exit")
 	}
 
@@ -93,9 +100,15 @@ func NewProposerSlashingValidator(iv *IndependentValidator) *ProposerSlashingVal
 }
 
 func (v *ProposerSlashingValidator) Validate(ctx context.Context, data []byte, topic string) error {
+	// Decompress the snappy-compressed data
+	decompressed, err := snappy.Decode(nil, data)
+	if err != nil {
+		return errors.Wrap(err, "failed to decompress snappy data")
+	}
+	
 	// Decode the proposer slashing
 	slashing := &ethpb.ProposerSlashing{}
-	if err := slashing.UnmarshalSSZ(data); err != nil {
+	if err := slashing.UnmarshalSSZ(decompressed); err != nil {
 		return errors.Wrap(err, "failed to decode proposer slashing")
 	}
 
@@ -190,9 +203,15 @@ func NewAttesterSlashingValidator(iv *IndependentValidator) *AttesterSlashingVal
 }
 
 func (v *AttesterSlashingValidator) Validate(ctx context.Context, data []byte, topic string) error {
+	// Decompress the snappy-compressed data
+	decompressed, err := snappy.Decode(nil, data)
+	if err != nil {
+		return errors.Wrap(err, "failed to decompress snappy data")
+	}
+	
 	// Decode the attester slashing
 	slashing := &ethpb.AttesterSlashing{}
-	if err := slashing.UnmarshalSSZ(data); err != nil {
+	if err := slashing.UnmarshalSSZ(decompressed); err != nil {
 		return errors.Wrap(err, "failed to decode attester slashing")
 	}
 
@@ -299,9 +318,15 @@ func NewBlsToExecutionChangeValidator(iv *IndependentValidator) *BlsToExecutionC
 }
 
 func (v *BlsToExecutionChangeValidator) Validate(ctx context.Context, data []byte, topic string) error {
+	// Decompress the snappy-compressed data
+	decompressed, err := snappy.Decode(nil, data)
+	if err != nil {
+		return errors.Wrap(err, "failed to decompress snappy data")
+	}
+	
 	// Decode the BLS to execution change
 	change := &ethpb.SignedBLSToExecutionChange{}
-	if err := change.UnmarshalSSZ(data); err != nil {
+	if err := change.UnmarshalSSZ(decompressed); err != nil {
 		return errors.Wrap(err, "failed to decode BLS to execution change")
 	}
 
@@ -412,9 +437,15 @@ func NewBLSToExecutionChangeValidator(iv *IndependentValidator) *BLSToExecutionC
 }
 
 func (v *BLSToExecutionChangeValidator) Validate(ctx context.Context, data []byte, topic string) error {
+	// Decompress the snappy-compressed data
+	decompressed, err := snappy.Decode(nil, data)
+	if err != nil {
+		return errors.Wrap(err, "failed to decompress snappy data")
+	}
+	
 	// Decode the signed BLS to execution change
 	change := &ethpb.SignedBLSToExecutionChange{}
-	if err := change.UnmarshalSSZ(data); err != nil {
+	if err := change.UnmarshalSSZ(decompressed); err != nil {
 		return errors.Wrap(err, "failed to decode BLS to execution change")
 	}
 
