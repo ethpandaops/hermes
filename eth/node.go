@@ -357,23 +357,30 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 	defer dsCleanupFn()
 
-	// identify the beacon node. We only have the host/port of the Beacon API
-	// endpoint. If we want to establish a P2P connection, we need its peer ID
-	// and dedicated p2p port. We call the identity endpoint to get this information
-	slog.Info("Getting Prysm P2P Identity...")
-	addrInfo, err := n.pryClient.Identity(ctx)
-	if err != nil {
-		return fmt.Errorf("get prysm node p2p addr info: %w", err)
-	}
+	// In independent validation mode, we only need HTTP access to Prysm for beacon state
+	// Skip P2P connection setup
+	var addrInfo *peer.AddrInfo
+	if n.cfg.ValidationMode != "independent" {
+		// identify the beacon node. We only have the host/port of the Beacon API
+		// endpoint. If we want to establish a P2P connection, we need its peer ID
+		// and dedicated p2p port. We call the identity endpoint to get this information
+		slog.Info("Getting Prysm P2P Identity...")
+		addrInfo, err = n.pryClient.Identity(ctx)
+		if err != nil {
+			return fmt.Errorf("get prysm node p2p addr info: %w", err)
+		}
 
-	slog.Info("Prysm P2P Identity:", tele.LogAttrPeerID(addrInfo.ID))
-	for i, maddr := range addrInfo.Addrs {
-		slog.Info(fmt.Sprintf("  [%d] %s", i, maddr.String()))
-	}
+		slog.Info("Prysm P2P Identity:", tele.LogAttrPeerID(addrInfo.ID))
+		for i, maddr := range addrInfo.Addrs {
+			slog.Info(fmt.Sprintf("  [%d] %s", i, maddr.String()))
+		}
 
-	// cache the address information on the node
-	n.pryInfo = addrInfo
-	n.reqResp.delegate = addrInfo.ID
+		// cache the address information on the node
+		n.pryInfo = addrInfo
+		n.reqResp.delegate = addrInfo.ID
+	} else {
+		slog.Info("Running in independent validation mode - skipping P2P connection to Prysm")
+	}
 
 	// Now we have the beacon node's identity. The next thing we need is its
 	// current status. The status consists of the ForkDigest, FinalizedRoot,
@@ -432,63 +439,66 @@ func (n *Node) Start(ctx context.Context) error {
 		}
 	}
 
-	// Create a connection signal that fires when the Prysm node has connected
-	// to us. Prysm will try this periodically AFTER we have registered ourselves
-	// as a trusted peer. Therefore, we register the signal first and only
-	// afterward add ourselves as a trusted peer to not miss the signal
-	// https://github.com/prysmaticlabs/prysm/issues/13659
-	timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	connSignal := n.host.ConnSignal(timeoutCtx, addrInfo.ID)
+	// Only establish P2P connection if not in independent validation mode
+	if n.cfg.ValidationMode != "independent" && addrInfo != nil {
+		// Create a connection signal that fires when the Prysm node has connected
+		// to us. Prysm will try this periodically AFTER we have registered ourselves
+		// as a trusted peer. Therefore, we register the signal first and only
+		// afterward add ourselves as a trusted peer to not miss the signal
+		// https://github.com/prysmaticlabs/prysm/issues/13659
+		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		connSignal := n.host.ConnSignal(timeoutCtx, addrInfo.ID)
 
-	// register ourselves as a trusted peer by submitting our private ip address
-	var trustedMaddr ma.Multiaddr
-	if n.cfg.LocalTrustedAddr {
-		trustedMaddr, err = n.host.LocalListenMaddr()
-		if err != nil {
-			return err
+		// register ourselves as a trusted peer by submitting our private ip address
+		var trustedMaddr ma.Multiaddr
+		if n.cfg.LocalTrustedAddr {
+			trustedMaddr, err = n.host.LocalListenMaddr()
+			if err != nil {
+				return err
+			}
+			slog.Info("Adding ourselves as a trusted peer to Prysm", tele.LogAttrPeerID(n.host.ID()), "on local maddr", trustedMaddr)
+		} else {
+			trustedMaddr, err = n.host.PrivateListenMaddr()
+			if err != nil {
+				return err
+			}
+			slog.Info("Adding ourselves as a trusted peer to Prysm", tele.LogAttrPeerID(n.host.ID()), "on priv maddr", trustedMaddr)
 		}
-		slog.Info("Adding ourselves as a trusted peer to Prysm", tele.LogAttrPeerID(n.host.ID()), "on local maddr", trustedMaddr)
-	} else {
-		trustedMaddr, err = n.host.PrivateListenMaddr()
-		if err != nil {
-			return err
+
+		if err := n.pryClient.AddTrustedPeer(ctx, n.host.ID(), trustedMaddr); err != nil {
+			return fmt.Errorf("failed adding ourself as trusted peer: %w", err)
 		}
-		slog.Info("Adding ourselves as a trusted peer to Prysm", tele.LogAttrPeerID(n.host.ID()), "on priv maddr", trustedMaddr)
-	}
 
-	if err := n.pryClient.AddTrustedPeer(ctx, n.host.ID(), trustedMaddr); err != nil {
-		return fmt.Errorf("failed adding ourself as trusted peer: %w", err)
-	}
+		defer func() {
+			// unregister ourselves as a trusted peer from prysm. Context timeout
+			// is not necessary because the pryClient applies a 5s timeout to each API call
+			slog.Info("Removing ourselves as a trusted peer from Prysm", tele.LogAttrPeerID(n.host.ID()))
+			if err := n.pryClient.RemoveTrustedPeer(context.Background(), n.host.ID()); err != nil { // use new context, as the old one is likely cancelled
+				slog.Warn("failed to remove ourself as a trusted peer", tele.LogAttrError(err))
+			}
+		}()
 
-	defer func() {
-		// unregister ourselves as a trusted peer from prysm. Context timeout
-		// is not necessary because the pryClient applies a 5s timeout to each API call
-		slog.Info("Removing ourselves as a trusted peer from Prysm", tele.LogAttrPeerID(n.host.ID()))
-		if err := n.pryClient.RemoveTrustedPeer(context.Background(), n.host.ID()); err != nil { // use new context, as the old one is likely cancelled
-			slog.Warn("failed to remove ourself as a trusted peer", tele.LogAttrError(err))
+		// register the node itself as the notifiee for network connection events
+		n.host.Network().Notify(n)
+
+		slog.Info("Proactively trying to connect to Prysm", tele.LogAttrPeerID(addrInfo.ID), "maddrs", addrInfo.Addrs)
+		if err := n.host.Connect(ctx, *addrInfo); err != nil {
+			slog.Info("Connection to beacon node failed", tele.LogAttrError(err))
+			slog.Info("Waiting for dialback from Prysm node")
 		}
-	}()
 
-	// register the node itself as the notifiee for network connection events
-	n.host.Network().Notify(n)
+		// wait for the connection to Prysm, this will pass immediately if the
+		// connection already exists.
+		if err := <-connSignal; err != nil {
+			return fmt.Errorf("failed waiting for Prysm dialback: %w", err)
+		} else {
+			slog.Info("Prysm is connected!", tele.LogAttrPeerID(addrInfo.ID), "maddr", n.host.Peerstore().Addrs(addrInfo.ID))
+		}
 
-	slog.Info("Proactively trying to connect to Prysm", tele.LogAttrPeerID(addrInfo.ID), "maddrs", addrInfo.Addrs)
-	if err := n.host.Connect(ctx, *addrInfo); err != nil {
-		slog.Info("Connection to beacon node failed", tele.LogAttrError(err))
-		slog.Info("Waiting for dialback from Prysm node")
+		// protect connection to beacon node so that it's not pruned at some point
+		n.host.ConnManager().Protect(addrInfo.ID, "hermes")
 	}
-
-	// wait for the connection to Prysm, this will pass immediately if the
-	// connection already exists.
-	if err := <-connSignal; err != nil {
-		return fmt.Errorf("failed waiting for Prysm dialback: %w", err)
-	} else {
-		slog.Info("Prysm is connected!", tele.LogAttrPeerID(addrInfo.ID), "maddr", n.host.Peerstore().Addrs(addrInfo.ID))
-	}
-
-	// protect connection to beacon node so that it's not pruned at some point
-	n.host.ConnManager().Protect(addrInfo.ID, "hermes")
 
 	// start the discovery service to find peers in the discv5 DHT
 	n.sup.Add(n.disc)
@@ -497,7 +507,10 @@ func (n *Node) Start(ctx context.Context) error {
 	n.sup.Add(n.pubSub)
 
 	// start the peerer service that ensures our registration as a trusted peer
-	n.sup.Add(n.peerer)
+	// Skip in independent mode as we don't need P2P connection to Prysm
+	if n.cfg.ValidationMode != "independent" {
+		n.sup.Add(n.peerer)
+	}
 
 	// start the hermes host to trace gossipsub messages
 	n.sup.Add(n.host)
