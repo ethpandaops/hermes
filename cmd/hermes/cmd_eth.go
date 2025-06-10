@@ -20,6 +20,10 @@ import (
 	"github.com/probe-lab/hermes/tele"
 )
 
+const (
+	flagCategoryValidation = "Validation Configuration:"
+)
+
 var ethConfig = &struct {
 	PrivateKeyStr               string
 	Chain                       string
@@ -58,6 +62,16 @@ var ethConfig = &struct {
 	SubnetBlobSidecarStart     uint64
 	SubnetBlobSidecarEnd       uint64
 	SubscriptionTopics         []string
+	// Validation configuration
+	ValidationMode               string
+	ValidationAttestationThreshold    int
+	ValidationAttestationPercent      float64
+	ValidationTimeout                 time.Duration
+	ValidationSignatureBatchSize      int
+	ValidationCacheSize              int
+	ValidationMaxConcurrent          int
+	ValidationStateSyncInterval      time.Duration
+	ValidationCommitteeCacheEpochs   int
 }{
 	PrivateKeyStr:               "", // unset means it'll be generated
 	Chain:                       params.MainnetName,
@@ -95,6 +109,16 @@ var ethConfig = &struct {
 	SubnetBlobSidecarCount:     0,
 	SubnetBlobSidecarStart:     0,
 	SubnetBlobSidecarEnd:       0,
+	// Default validation configuration values.
+	ValidationMode:               "delegated",
+	ValidationAttestationThreshold:    10,
+	ValidationAttestationPercent:      0.0,
+	ValidationTimeout:                 5 * time.Second,
+	ValidationSignatureBatchSize:      64,
+	ValidationCacheSize:              10000,
+	ValidationMaxConcurrent:          100,
+	ValidationStateSyncInterval:      30 * time.Second,
+	ValidationCommitteeCacheEpochs:   4,
 }
 
 var cmdEth = &cli.Command{
@@ -380,6 +404,79 @@ var cmdEthFlags = []cli.Flag{
 			return nil
 		},
 	},
+	// Validation configuration flags
+	&cli.StringFlag{
+		Name:        "validation.mode",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_MODE"},
+		Usage:       "Validation mode: 'independent' for in-process validation or 'delegated' for Prysm delegation",
+		Value:       ethConfig.ValidationMode,
+		Destination: &ethConfig.ValidationMode,
+		Category:    flagCategoryValidation,
+	},
+	&cli.IntFlag{
+		Name:        "validation.attestation.threshold",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_ATTESTATION_THRESHOLD"},
+		Usage:       "Minimum attestations required for block validation in independent mode",
+		Value:       ethConfig.ValidationAttestationThreshold,
+		Destination: &ethConfig.ValidationAttestationThreshold,
+		Category:    flagCategoryValidation,
+	},
+	&cli.Float64Flag{
+		Name:        "validation.attestation.percent",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_ATTESTATION_PERCENT"},
+		Usage:       "Percentage of committee required for block validation (0.0-1.0) in independent mode",
+		Value:       ethConfig.ValidationAttestationPercent,
+		Destination: &ethConfig.ValidationAttestationPercent,
+		Category:    flagCategoryValidation,
+	},
+	&cli.DurationFlag{
+		Name:        "validation.timeout",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_TIMEOUT"},
+		Usage:       "Maximum time to wait for attestations in independent mode",
+		Value:       ethConfig.ValidationTimeout,
+		Destination: &ethConfig.ValidationTimeout,
+		Category:    flagCategoryValidation,
+	},
+	&cli.IntFlag{
+		Name:        "validation.signature.batch.size",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_SIGNATURE_BATCH_SIZE"},
+		Usage:       "Batch size for BLS signature verification in independent mode",
+		Value:       ethConfig.ValidationSignatureBatchSize,
+		Destination: &ethConfig.ValidationSignatureBatchSize,
+		Category:    flagCategoryValidation,
+	},
+	&cli.IntFlag{
+		Name:        "validation.cache.size",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_CACHE_SIZE"},
+		Usage:       "LRU cache size for validation data in independent mode",
+		Value:       ethConfig.ValidationCacheSize,
+		Destination: &ethConfig.ValidationCacheSize,
+		Category:    flagCategoryValidation,
+	},
+	&cli.IntFlag{
+		Name:        "validation.max.concurrent",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_MAX_CONCURRENT"},
+		Usage:       "Maximum concurrent validation goroutines in independent mode",
+		Value:       ethConfig.ValidationMaxConcurrent,
+		Destination: &ethConfig.ValidationMaxConcurrent,
+		Category:    flagCategoryValidation,
+	},
+	&cli.DurationFlag{
+		Name:        "validation.state.sync.interval",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_STATE_SYNC_INTERVAL"},
+		Usage:       "How often to sync beacon state in independent mode",
+		Value:       ethConfig.ValidationStateSyncInterval,
+		Destination: &ethConfig.ValidationStateSyncInterval,
+		Category:    flagCategoryValidation,
+	},
+	&cli.IntFlag{
+		Name:        "validation.committee.cache.epochs",
+		EnvVars:     []string{"HERMES_ETH_VALIDATION_COMMITTEE_CACHE_EPOCHS"},
+		Usage:       "Number of epochs to cache committee assignments in independent mode",
+		Value:       ethConfig.ValidationCommitteeCacheEpochs,
+		Destination: &ethConfig.ValidationCommitteeCacheEpochs,
+		Category:    flagCategoryValidation,
+	},
 }
 
 func cmdEthAction(c *cli.Context) error {
@@ -476,6 +573,18 @@ func cmdEthAction(c *cli.Context) error {
 		SubscriptionTopics:             ethConfig.SubscriptionTopics,
 		Tracer:                         otel.GetTracerProvider().Tracer("hermes"),
 		Meter:                          otel.GetMeterProvider().Meter("hermes"),
+		// Validation config
+		ValidationMode: ethConfig.ValidationMode,
+		ValidationConfig: &eth.ValidationConfig{
+			AttestationThreshold:    ethConfig.ValidationAttestationThreshold,
+			AttestationPercent:      ethConfig.ValidationAttestationPercent,
+			ValidationTimeout:       ethConfig.ValidationTimeout,
+			SignatureBatchSize:      ethConfig.ValidationSignatureBatchSize,
+			CacheSize:              ethConfig.ValidationCacheSize,
+			MaxConcurrentValidation: ethConfig.ValidationMaxConcurrent,
+			StateSyncInterval:      ethConfig.ValidationStateSyncInterval,
+			CommitteeCacheEpochs:   ethConfig.ValidationCommitteeCacheEpochs,
+		},
 	}
 
 	n, err := eth.NewNode(cfg)

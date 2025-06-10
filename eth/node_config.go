@@ -32,6 +32,52 @@ import (
 	"github.com/probe-lab/hermes/host"
 )
 
+// ValidationConfig holds configuration for gossipsub message validation
+type ValidationConfig struct {
+	// Attestation validation
+	AttestationThreshold    int           `yaml:"attestation_threshold" default:"10"`    // Min attestations for block validation
+	AttestationPercent      float64       `yaml:"attestation_percent" default:"0.0"`      // Or percentage of committee
+	ValidationTimeout       time.Duration `yaml:"validation_timeout" default:"5s"`        // Max wait for attestations
+	
+	// Performance settings
+	SignatureBatchSize      int           `yaml:"signature_batch_size" default:"64"`      // Batch size for BLS verification
+	CacheSize              int           `yaml:"cache_size" default:"10000"`             // LRU cache size
+	MaxConcurrentValidation int           `yaml:"max_concurrent_validation" default:"100"` // Concurrent validation goroutines
+	
+	// State sync settings
+	StateSyncInterval      time.Duration `yaml:"state_sync_interval" default:"30s"`      // How often to sync beacon state
+	CommitteeCacheEpochs   int          `yaml:"committee_cache_epochs" default:"4"`     // Number of epochs to cache committees
+}
+
+// Validate validates the ValidationConfig
+func (vc *ValidationConfig) Validate() error {
+	if vc.AttestationThreshold < 0 {
+		return fmt.Errorf("attestation threshold must be non-negative")
+	}
+	if vc.AttestationPercent < 0 || vc.AttestationPercent > 1 {
+		return fmt.Errorf("attestation percent must be between 0 and 1")
+	}
+	if vc.ValidationTimeout <= 0 {
+		return fmt.Errorf("validation timeout must be positive")
+	}
+	if vc.SignatureBatchSize <= 0 {
+		return fmt.Errorf("signature batch size must be positive")
+	}
+	if vc.CacheSize <= 0 {
+		return fmt.Errorf("cache size must be positive")
+	}
+	if vc.MaxConcurrentValidation <= 0 {
+		return fmt.Errorf("max concurrent validation must be positive")
+	}
+	if vc.StateSyncInterval <= 0 {
+		return fmt.Errorf("state sync interval must be positive")
+	}
+	if vc.CommitteeCacheEpochs <= 0 {
+		return fmt.Errorf("committee cache epochs must be positive")
+	}
+	return nil
+}
+
 type NodeConfig struct {
 	// A custom struct that holds information about the GenesisTime and GenesisValidatorRoot hash
 	GenesisConfig *GenesisConfig
@@ -113,6 +159,10 @@ type NodeConfig struct {
 	// Telemetry accessors
 	Tracer trace.Tracer
 	Meter  metric.Meter
+
+	// Validation configuration
+	ValidationMode   string            `yaml:"validation_mode" default:"delegated"` // "independent" or "delegated"
+	ValidationConfig *ValidationConfig `yaml:"validation_config"`
 }
 
 // Validate validates the [NodeConfig] [Node] configuration.
@@ -222,6 +272,20 @@ func (n *NodeConfig) Validate() error {
 			}
 		} else {
 			return fmt.Errorf("s3 configuration is empty")
+		}
+	}
+
+	// Validate validation configuration
+	if n.ValidationMode != "" && n.ValidationMode != "independent" && n.ValidationMode != "delegated" {
+		return fmt.Errorf("validation mode must be 'independent' or 'delegated', got %s", n.ValidationMode)
+	}
+	
+	if n.ValidationMode == "independent" {
+		if n.ValidationConfig == nil {
+			return fmt.Errorf("validation config required for independent mode")
+		}
+		if err := n.ValidationConfig.Validate(); err != nil {
+			return fmt.Errorf("invalid validation config: %w", err)
 		}
 	}
 

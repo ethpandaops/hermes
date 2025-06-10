@@ -11,12 +11,18 @@ import (
 	eth "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	gk "github.com/dennis-tra/go-kinesis"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/sirupsen/logrus"
 	"github.com/thejerf/suture/v4"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/probe-lab/hermes/eth/validation"
+	"github.com/probe-lab/hermes/eth/validation/common"
+	"github.com/probe-lab/hermes/eth/validation/delegated"
+	"github.com/probe-lab/hermes/eth/validation/independent"
 	"github.com/probe-lab/hermes/host"
 	"github.com/probe-lab/hermes/tele"
 )
@@ -62,6 +68,9 @@ type Node struct {
 
 	// eventCallbacks contains a list of callbacks that are executed when an event is received
 	eventCallbacks []func(ctx context.Context, event *host.TraceEvent)
+	
+	// Validation router for gossipsub message validation
+	validationRouter *validation.Router
 }
 
 // NewNode initializes a new [Node] using the provided configuration.
@@ -400,9 +409,27 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 
 	// initialize GossipSub
-	n.pubSub.gs, err = n.host.InitGossipSub(ctx, n.cfg.pubsubOptions(n, actVals)...)
+	pubsubOpts := n.cfg.pubsubOptions(n, actVals)
+	
+	// Add validation if configured
+	if n.cfg.ValidationMode == "independent" || n.cfg.ValidationMode == "delegated" {
+		validationOpts, err := n.setupValidation(ctx)
+		if err != nil {
+			return fmt.Errorf("setup validation: %w", err)
+		}
+		pubsubOpts = append(pubsubOpts, validationOpts...)
+	}
+	
+	n.pubSub.gs, err = n.host.InitGossipSub(ctx, pubsubOpts...)
 	if err != nil {
 		return fmt.Errorf("init gossip sub: %w", err)
+	}
+	
+	// Register topic validators after pubsub is created
+	if n.validationRouter != nil {
+		if err := n.registerTopicValidators(); err != nil {
+			return fmt.Errorf("register topic validators: %w", err)
+		}
 	}
 
 	// Create a connection signal that fires when the Prysm node has connected
@@ -505,6 +532,50 @@ func logDeferErr(fn func() error, onErrMsg string) {
 	}
 }
 
+// registerTopicValidators registers all topic validators with pubsub
+func (n *Node) registerTopicValidators() error {
+	topics := []struct {
+		base string
+		msgType common.MessageType
+		hasSubnets bool
+		subnetCount int
+	}{
+		{"beacon_block", common.MessageBeaconBlock, false, 0},
+		{"beacon_aggregate_and_proof", common.MessageAggregateAndProof, false, 0},
+		{"voluntary_exit", common.MessageVoluntaryExit, false, 0},
+		{"proposer_slashing", common.MessageProposerSlashing, false, 0},
+		{"attester_slashing", common.MessageAttesterSlashing, false, 0},
+		{"bls_to_execution_change", common.MessageBlsToExecutionChange, false, 0},
+		{"blob_sidecar", common.MessageBlobSidecar, true, 6}, // MAX_BLOBS_PER_BLOCK
+		{"beacon_attestation", common.MessageAttestation, true, 64}, // ATTESTATION_SUBNET_COUNT
+		{"sync_committee", common.MessageSyncCommittee, true, 4}, // SYNC_COMMITTEE_SUBNET_COUNT
+		{"sync_committee_contribution_and_proof", common.MessageContributionAndProof, false, 0},
+	}
+	
+	for _, t := range topics {
+		if t.hasSubnets {
+			// Register validator for each subnet
+			for i := 0; i < t.subnetCount; i++ {
+				topic := fmt.Sprintf("/eth2/%x/%s_%d/ssz_snappy", n.cfg.ForkDigest, t.base, i)
+				validator := n.validationRouter.CreateTopicValidator(topic, t.msgType)
+				if err := n.pubSub.gs.RegisterTopicValidator(topic, validator); err != nil {
+					return fmt.Errorf("register validator for %s: %w", topic, err)
+				}
+			}
+		} else {
+			// Register single validator
+			topic := fmt.Sprintf("/eth2/%x/%s/ssz_snappy", n.cfg.ForkDigest, t.base)
+			validator := n.validationRouter.CreateTopicValidator(topic, t.msgType)
+			if err := n.pubSub.gs.RegisterTopicValidator(topic, validator); err != nil {
+				return fmt.Errorf("register validator for %s: %w", topic, err)
+			}
+		}
+	}
+	
+	slog.Info("Registered topic validators", "mode", n.cfg.ValidationMode)
+	return nil
+}
+
 // terminateSupervisorTreeOnErr can be used like
 //
 //	defer func() { err = terminateSupervisorTreeOnErr(err) }()
@@ -533,4 +604,99 @@ func (n *Node) startDataStream(ctx context.Context) (func(), error) {
 	}
 
 	return cleanupFn, nil
+}
+
+// setupValidation initializes the validation router
+func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
+	// Create logger adapter for validation
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+	
+	// Create router config
+	routerConfig := &validation.RouterConfig{
+		Mode:   common.ModeDelegated, // Default to delegated
+		Logger: logger,
+	}
+	
+	beaconEndpoint := fmt.Sprintf("http://%s:%d", n.cfg.PrysmHost, n.cfg.PrysmPortHTTP)
+	
+	if n.cfg.ValidationMode == "independent" {
+		routerConfig.Mode = common.ModeIndependent
+		routerConfig.IndependentConfig = &independent.IndependentConfig{
+			Logger:              logger,
+			BeaconNodeEndpoint:  beaconEndpoint,
+			StateUpdateInterval: 30 * time.Second,
+		}
+		if n.cfg.ValidationConfig != nil {
+			routerConfig.IndependentConfig.AttestationThreshold = n.cfg.ValidationConfig.AttestationThreshold
+			routerConfig.IndependentConfig.AttestationPercent = n.cfg.ValidationConfig.AttestationPercent
+			routerConfig.IndependentConfig.ValidationTimeout = n.cfg.ValidationConfig.ValidationTimeout
+			routerConfig.IndependentConfig.SignatureCacheSize = n.cfg.ValidationConfig.CacheSize
+			routerConfig.IndependentConfig.CommitteeCacheSize = n.cfg.ValidationConfig.CacheSize
+			routerConfig.IndependentConfig.SeenMessageCacheSize = n.cfg.ValidationConfig.CacheSize
+			routerConfig.IndependentConfig.EnableBatchProcessing = n.cfg.ValidationConfig.SignatureBatchSize > 1
+			routerConfig.IndependentConfig.StateUpdateInterval = n.cfg.ValidationConfig.StateSyncInterval
+		}
+	} else {
+		// Create Prysm client for delegated mode
+		prysmClient := &delegated.PrysmClient{}
+		routerConfig.DelegatedConfig = &delegated.DelegatedConfig{
+			PrysmClient: prysmClient,
+			Logger:      logger,
+			CacheSize:   10000,
+		}
+	}
+	
+	// Create validation router
+	router, err := validation.NewRouter(routerConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create validation router: %w", err)
+	}
+	
+	// Start validation router
+	if err := router.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start validation router: %w", err)
+	}
+	
+	n.validationRouter = router
+	
+	// Create pubsub options with validators for each topic
+	var opts []pubsub.Option
+	
+	// Register validators for all topics
+	topics := []struct {
+		base string
+		msgType common.MessageType
+		hasSubnets bool
+		subnetCount int
+	}{
+		{"beacon_block", common.MessageBeaconBlock, false, 0},
+		{"beacon_aggregate_and_proof", common.MessageAggregateAndProof, false, 0},
+		{"voluntary_exit", common.MessageVoluntaryExit, false, 0},
+		{"proposer_slashing", common.MessageProposerSlashing, false, 0},
+		{"attester_slashing", common.MessageAttesterSlashing, false, 0},
+		{"bls_to_execution_change", common.MessageBlsToExecutionChange, false, 0},
+		{"blob_sidecar", common.MessageBlobSidecar, true, 6}, // MAX_BLOBS_PER_BLOCK
+		{"beacon_attestation", common.MessageAttestation, true, 64}, // ATTESTATION_SUBNET_COUNT
+		{"sync_committee", common.MessageSyncCommittee, true, 4}, // SYNC_COMMITTEE_SUBNET_COUNT
+		{"sync_committee_contribution_and_proof", common.MessageContributionAndProof, false, 0},
+	}
+	
+	for _, t := range topics {
+		if t.hasSubnets {
+			// Register validator for each subnet
+			for i := 0; i < t.subnetCount; i++ {
+				topic := fmt.Sprintf("/eth2/%x/%s_%d/ssz_snappy", n.cfg.ForkDigest, t.base, i)
+				_ = router.CreateTopicValidator(topic, t.msgType)
+				// TODO: Register validator after pubsub creation
+			}
+		} else {
+			// Register single validator
+			topic := fmt.Sprintf("/eth2/%x/%s/ssz_snappy", n.cfg.ForkDigest, t.base)
+			_ = router.CreateTopicValidator(topic, t.msgType)
+			// TODO: Register validator after pubsub creation
+		}
+	}
+	
+	return opts, nil
 }
