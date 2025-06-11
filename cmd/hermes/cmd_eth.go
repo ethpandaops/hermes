@@ -88,7 +88,7 @@ var ethConfig = &struct {
 	PrysmUseTLS:                 false,
 	DialConcurrency:             16,
 	DialTimeout:                 5 * time.Second,
-	MaxPeers:                    30, // arbitrary
+	MaxPeers:                    80, // compliance: middle of 64-100 range
 	GenesisSSZURL:               "",
 	ConfigURL:                   "",
 	BootnodesURL:                "",
@@ -209,7 +209,7 @@ var cmdEthFlags = []cli.Flag{
 		Usage:       "Frequency at which GossipSub peerscores will be accessed (in seconds)",
 		Value:       ethConfig.Libp2pPeerscoreSnapshotFreq,
 		Destination: &ethConfig.Libp2pPeerscoreSnapshotFreq,
-		DefaultText: "random",
+		DefaultText: "60s",
 	},
 	&cli.BoolFlag{
 		Name:        "local.trusted.addr",

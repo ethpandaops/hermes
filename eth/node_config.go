@@ -78,6 +78,104 @@ func (vc *ValidationConfig) Validate() error {
 	return nil
 }
 
+// GossipSubConfig holds GossipSub compliance configuration
+type GossipSubConfig struct {
+	// Core mesh parameters (already configured in existing code)
+	D      int `yaml:"d" default:"8"`       // topic stable mesh target count
+	DLow   int `yaml:"d_low" default:"6"`   // topic stable mesh low watermark  
+	DHigh  int `yaml:"d_high" default:"12"` // topic stable mesh high watermark
+
+	// Missing compliance parameters
+	DLazy              int           `yaml:"d_lazy" default:"6"`                // peer exchange parameter
+	DScore             int           `yaml:"d_score" default:"5"`               // peers to include in IWant
+	DOut               int           `yaml:"d_out" default:"3"`                 // mesh peers when pruning
+	FanoutTTL          time.Duration `yaml:"fanout_ttl" default:"60s"`          // fanout time to live
+	SeenMessagesTTL    time.Duration `yaml:"seen_ttl" default:"780s"`           // seen messages time to live
+	Advertise          int           `yaml:"advertise" default:"3"`             // peers to include in prune messages
+	
+	// Additional compliance settings
+	FloodPublishThreshold int64 `yaml:"flood_publish_threshold" default:"16384"` // threshold for flood publishing
+}
+
+// Validate validates the GossipSubConfig
+func (gsc *GossipSubConfig) Validate() error {
+	if gsc.D <= 0 {
+		return fmt.Errorf("D must be positive")
+	}
+	if gsc.DLow <= 0 {
+		return fmt.Errorf("DLow must be positive") 
+	}
+	if gsc.DHigh <= gsc.D {
+		return fmt.Errorf("DHigh must be greater than D")
+	}
+	if gsc.DLazy < 0 {
+		return fmt.Errorf("DLazy must be non-negative")
+	}
+	if gsc.DScore < 0 {
+		return fmt.Errorf("DScore must be non-negative")
+	}
+	if gsc.DOut < 0 {
+		return fmt.Errorf("DOut must be non-negative")
+	}
+	if gsc.FanoutTTL <= 0 {
+		return fmt.Errorf("FanoutTTL must be positive")
+	}
+	if gsc.SeenMessagesTTL <= 0 {
+		return fmt.Errorf("SeenMessagesTTL must be positive")
+	}
+	if gsc.Advertise < 0 {
+		return fmt.Errorf("Advertise must be non-negative")
+	}
+	return nil
+}
+
+// RPCConfig holds RPC compliance configuration
+type RPCConfig struct {
+	// Request size validation limits
+	MaxBlocksPerRequest       uint64 `yaml:"max_blocks_per_request" default:"128"`       // blocks by range max count (Deneb)
+	MaxBlobSidecarsPerRequest uint64 `yaml:"max_blob_sidecars_per_request" default:"768"` // blob sidecars max count (Deneb)
+	MaxRootsPerRequest        uint64 `yaml:"max_roots_per_request" default:"64"`         // blocks by root max count
+	
+	// Rate limiting configuration
+	RateLimitingEnabled bool `yaml:"rate_limiting_enabled" default:"true"`
+	// Per-peer rate limits (requests per minute)
+	BlocksPerMinutePerPeer       int `yaml:"blocks_per_minute_per_peer" default:"500"`
+	BlobSidecarsPerMinutePerPeer int `yaml:"blob_sidecars_per_minute_per_peer" default:"2000"`
+	RequestsPerMinutePerPeer     int `yaml:"requests_per_minute_per_peer" default:"100"`
+	// Global limits
+	GlobalMaxConcurrentRequests int `yaml:"global_max_concurrent_requests" default:"1000"`
+	BurstSize                   int `yaml:"burst_size" default:"50"`
+}
+
+// Validate validates the RPCConfig
+func (rc *RPCConfig) Validate() error {
+	if rc.MaxBlocksPerRequest == 0 {
+		return fmt.Errorf("MaxBlocksPerRequest must be positive")
+	}
+	if rc.MaxBlobSidecarsPerRequest == 0 {
+		return fmt.Errorf("MaxBlobSidecarsPerRequest must be positive")
+	}
+	if rc.MaxRootsPerRequest == 0 {
+		return fmt.Errorf("MaxRootsPerRequest must be positive")
+	}
+	if rc.BlocksPerMinutePerPeer <= 0 {
+		return fmt.Errorf("BlocksPerMinutePerPeer must be positive")
+	}
+	if rc.BlobSidecarsPerMinutePerPeer <= 0 {
+		return fmt.Errorf("BlobSidecarsPerMinutePerPeer must be positive")
+	}
+	if rc.RequestsPerMinutePerPeer <= 0 {
+		return fmt.Errorf("RequestsPerMinutePerPeer must be positive")
+	}
+	if rc.GlobalMaxConcurrentRequests <= 0 {
+		return fmt.Errorf("GlobalMaxConcurrentRequests must be positive")
+	}
+	if rc.BurstSize <= 0 {
+		return fmt.Errorf("BurstSize must be positive")
+	}
+	return nil
+}
+
 type NodeConfig struct {
 	// A custom struct that holds information about the GenesisTime and GenesisValidatorRoot hash
 	GenesisConfig *GenesisConfig
@@ -134,6 +232,12 @@ type NodeConfig struct {
 	// The maximum number of peers our libp2p host can be connected to.
 	MaxPeers int
 
+	// Minimum number of peers to maintain
+	MinPeers int
+
+	// Target number of peers
+	TargetPeers int
+
 	// Limits the number of concurrent connection establishment routines. When
 	// we discover peers over discv5 and are not at our MaxPeers limit we try
 	// to establish a connection to a peer. However, we limit the concurrency to
@@ -163,6 +267,12 @@ type NodeConfig struct {
 	// Validation configuration
 	ValidationMode   string            `yaml:"validation_mode" default:"delegated"` // "independent" or "delegated"
 	ValidationConfig *ValidationConfig `yaml:"validation_config"`
+
+	// GossipSub compliance configuration
+	GossipSubConfig *GossipSubConfig `yaml:"gossipsub_config"`
+
+	// RPC compliance configuration
+	RPCConfig *RPCConfig `yaml:"rpc_config"`
 }
 
 // Validate validates the [NodeConfig] [Node] configuration.
@@ -297,6 +407,25 @@ func (n *NodeConfig) Validate() error {
 		return fmt.Errorf("meter must not be nil")
 	}
 
+	// Validate GossipSub configuration
+	if n.GossipSubConfig != nil {
+		if err := n.GossipSubConfig.Validate(); err != nil {
+			return fmt.Errorf("invalid gossipsub config: %w", err)
+		}
+	}
+
+	// Validate RPC configuration
+	if n.RPCConfig != nil {
+		if err := n.RPCConfig.Validate(); err != nil {
+			return fmt.Errorf("invalid rpc config: %w", err)
+		}
+	}
+
+	// Warn if peer count is below recommended minimum
+	if n.MaxPeers < 64 {
+		slog.Warn("Peer count below recommended minimum", "current", n.MaxPeers, "recommended_min", 64)
+	}
+
 	return nil
 }
 
@@ -410,7 +539,7 @@ func (n *NodeConfig) pubsubOptions(subFilter pubsub.SubscriptionFilter, activeVa
 		pubsub.WithValidateQueueSize(n.PubSubQueueSize),
 		pubsub.WithPeerScore(n.peerScoringParams(activeValidators)),
 		// pubsub.WithPeerScoreInspect(s.peerInspector, time.Minute),
-		pubsub.WithGossipSubParams(pubsubGossipParam()),
+		pubsub.WithGossipSubParams(n.pubsubGossipParamWithCompliance()),
 		// pubsub.WithRawTracer(gossipTracer{host: s.host}),
 	}
 	return psOpts
@@ -485,6 +614,41 @@ func pubsubGossipParam() pubsub.GossipSubParams {
 	gParams.HeartbeatInterval = gossipSubHeartbeatInterval
 	gParams.HistoryLength = gossipSubMcacheLen
 	gParams.HistoryGossip = gossipSubMcacheGossip
+	return gParams
+}
+
+// creates a custom gossipsub parameter set with compliance parameters.
+func (n *NodeConfig) pubsubGossipParamWithCompliance() pubsub.GossipSubParams {
+	gParams := pubsub.DefaultGossipSubParams()
+	
+	// Use configured values if available, otherwise fall back to defaults
+	if n.GossipSubConfig != nil {
+		gParams.D = n.GossipSubConfig.D
+		gParams.Dlo = n.GossipSubConfig.DLow
+		gParams.Dhi = n.GossipSubConfig.DHigh
+		gParams.Dlazy = n.GossipSubConfig.DLazy
+		gParams.Dscore = n.GossipSubConfig.DScore
+		gParams.Dout = n.GossipSubConfig.DOut
+		gParams.FanoutTTL = n.GossipSubConfig.FanoutTTL
+		// Note: SeenMessagesTTL, Advertise, FloodPublish, FloodPublishThreshold 
+		// are not available in this version of libp2p-pubsub
+		// These will need to be configured at the pubsub level
+	} else {
+		// Use compliance defaults
+		gParams.D = gossipSubD
+		gParams.Dlo = gossipSubDlo
+		gParams.Dhi = gossipSubDhi
+		gParams.Dlazy = 6      // compliance default
+		gParams.Dscore = 5     // compliance default  
+		gParams.Dout = 3       // compliance default
+		gParams.FanoutTTL = 60 * time.Second    // compliance default
+	}
+	
+	// Keep existing heartbeat and history settings
+	gParams.HeartbeatInterval = gossipSubHeartbeatInterval
+	gParams.HistoryLength = gossipSubMcacheLen
+	gParams.HistoryGossip = gossipSubMcacheGossip
+	
 	return gParams
 }
 
