@@ -68,7 +68,7 @@ type Node struct {
 
 	// eventCallbacks contains a list of callbacks that are executed when an event is received
 	eventCallbacks []func(ctx context.Context, event *host.TraceEvent)
-	
+
 	// Validation router for gossipsub message validation
 	validationRouter *validation.Router
 }
@@ -417,7 +417,7 @@ func (n *Node) Start(ctx context.Context) error {
 
 	// initialize GossipSub
 	pubsubOpts := n.cfg.pubsubOptions(n, actVals)
-	
+
 	// Add validation if configured
 	if n.cfg.ValidationMode == "independent" || n.cfg.ValidationMode == "delegated" {
 		validationOpts, err := n.setupValidation(ctx)
@@ -426,12 +426,12 @@ func (n *Node) Start(ctx context.Context) error {
 		}
 		pubsubOpts = append(pubsubOpts, validationOpts...)
 	}
-	
+
 	n.pubSub.gs, err = n.host.InitGossipSub(ctx, pubsubOpts...)
 	if err != nil {
 		return fmt.Errorf("init gossip sub: %w", err)
 	}
-	
+
 	// Register topic validators after pubsub is created
 	if n.validationRouter != nil {
 		if err := n.registerTopicValidators(); err != nil {
@@ -548,9 +548,9 @@ func logDeferErr(fn func() error, onErrMsg string) {
 // registerTopicValidators registers all topic validators with pubsub
 func (n *Node) registerTopicValidators() error {
 	topics := []struct {
-		base string
-		msgType common.MessageType
-		hasSubnets bool
+		base        string
+		msgType     common.MessageType
+		hasSubnets  bool
 		subnetCount int
 	}{
 		{"beacon_block", common.MessageBeaconBlock, false, 0},
@@ -559,12 +559,12 @@ func (n *Node) registerTopicValidators() error {
 		{"proposer_slashing", common.MessageProposerSlashing, false, 0},
 		{"attester_slashing", common.MessageAttesterSlashing, false, 0},
 		{"bls_to_execution_change", common.MessageBlsToExecutionChange, false, 0},
-		{"blob_sidecar", common.MessageBlobSidecar, true, 6}, // MAX_BLOBS_PER_BLOCK
+		{"blob_sidecar", common.MessageBlobSidecar, true, 6},        // MAX_BLOBS_PER_BLOCK
 		{"beacon_attestation", common.MessageAttestation, true, 64}, // ATTESTATION_SUBNET_COUNT
-		{"sync_committee", common.MessageSyncCommittee, true, 4}, // SYNC_COMMITTEE_SUBNET_COUNT
+		{"sync_committee", common.MessageSyncCommittee, true, 4},    // SYNC_COMMITTEE_SUBNET_COUNT
 		{"sync_committee_contribution_and_proof", common.MessageContributionAndProof, false, 0},
 	}
-	
+
 	for _, t := range topics {
 		if t.hasSubnets {
 			// Register validator for each subnet
@@ -584,7 +584,7 @@ func (n *Node) registerTopicValidators() error {
 			}
 		}
 	}
-	
+
 	slog.Info("Registered topic validators", "mode", n.cfg.ValidationMode)
 	return nil
 }
@@ -624,20 +624,22 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 	// Create logger adapter for validation
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
-	
+
 	// Create router config
 	routerConfig := &validation.RouterConfig{
 		Mode:   common.ModeDelegated, // Default to delegated
 		Logger: logger,
 	}
-	
-	beaconEndpoint := fmt.Sprintf("http://%s:%d", n.cfg.PrysmHost, n.cfg.PrysmPortHTTP)
-	
+
+	//beaconEndpoint := fmt.Sprintf("http://%s:%d", n.cfg.PrysmHost, n.cfg.PrysmPortHTTP)
+
 	if n.cfg.ValidationMode == "independent" {
 		routerConfig.Mode = common.ModeIndependent
 		routerConfig.IndependentConfig = &independent.IndependentConfig{
 			Logger:              logger,
-			BeaconNodeEndpoint:  beaconEndpoint,
+			BeaconNodeEndpoint:  n.cfg.PrysmHost,
+			BeaconNodePortHTTP:  n.cfg.PrysmPortHTTP,
+			BeaconNodeUseTLS:    n.cfg.PrysmUseTLS,
 			StateUpdateInterval: 30 * time.Second,
 		}
 		if n.cfg.ValidationConfig != nil {
@@ -659,28 +661,28 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 			CacheSize:   10000,
 		}
 	}
-	
+
 	// Create validation router
 	router, err := validation.NewRouter(routerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create validation router: %w", err)
 	}
-	
+
 	// Start validation router
 	if err := router.Start(ctx); err != nil {
 		return nil, fmt.Errorf("start validation router: %w", err)
 	}
-	
+
 	n.validationRouter = router
-	
+
 	// Create pubsub options with validators for each topic
 	var opts []pubsub.Option
-	
+
 	// Register validators for all topics
 	topics := []struct {
-		base string
-		msgType common.MessageType
-		hasSubnets bool
+		base        string
+		msgType     common.MessageType
+		hasSubnets  bool
 		subnetCount int
 	}{
 		{"beacon_block", common.MessageBeaconBlock, false, 0},
@@ -689,12 +691,12 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 		{"proposer_slashing", common.MessageProposerSlashing, false, 0},
 		{"attester_slashing", common.MessageAttesterSlashing, false, 0},
 		{"bls_to_execution_change", common.MessageBlsToExecutionChange, false, 0},
-		{"blob_sidecar", common.MessageBlobSidecar, true, 6}, // MAX_BLOBS_PER_BLOCK
+		{"blob_sidecar", common.MessageBlobSidecar, true, 6},        // MAX_BLOBS_PER_BLOCK
 		{"beacon_attestation", common.MessageAttestation, true, 64}, // ATTESTATION_SUBNET_COUNT
-		{"sync_committee", common.MessageSyncCommittee, true, 4}, // SYNC_COMMITTEE_SUBNET_COUNT
+		{"sync_committee", common.MessageSyncCommittee, true, 4},    // SYNC_COMMITTEE_SUBNET_COUNT
 		{"sync_committee_contribution_and_proof", common.MessageContributionAndProof, false, 0},
 	}
-	
+
 	for _, t := range topics {
 		if t.hasSubnets {
 			// Register validator for each subnet
@@ -710,6 +712,6 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 			// TODO: Register validator after pubsub creation
 		}
 	}
-	
+
 	return opts, nil
 }

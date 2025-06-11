@@ -1,19 +1,22 @@
 package independent
 
 import (
-	"github.com/probe-lab/hermes/eth/validation/common"
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"time"
 
 	eth2client "github.com/attestantio/go-eth2-client"
 	"github.com/attestantio/go-eth2-client/api"
-	"github.com/attestantio/go-eth2-client/http"
+	httpclient "github.com/attestantio/go-eth2-client/http"
 	"github.com/attestantio/go-eth2-client/spec"
 	"github.com/attestantio/go-eth2-client/spec/phase0"
-	"github.com/pkg/errors"
 	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+
+	"github.com/probe-lab/hermes/eth/validation/common"
 )
 
 // HTTPStateProvider fetches beacon state from HTTP API using attestant client
@@ -23,15 +26,37 @@ type HTTPStateProvider struct {
 }
 
 // NewHTTPStateProvider creates a new HTTP-based state provider
-func NewHTTPStateProvider(endpoint string) *HTTPStateProvider {
+func NewHTTPStateProvider(endpoint string, port int, useTLS bool) *HTTPStateProvider {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
 	
+	// Build the full endpoint URL
+	scheme := "http"
+	if useTLS {
+		scheme = "https"
+	}
+	fullEndpoint := fmt.Sprintf("%s://%s:%d", scheme, endpoint, port)
+	
+	// Create custom HTTP client with TLS configuration
+	httpClient := &http.Client{
+		Timeout: 5 * time.Minute,
+	}
+	
+	if useTLS {
+		// Configure TLS
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: false, // Should be configurable in production
+			},
+		}
+	}
+	
 	// Create attestant HTTP client
-	client, err := http.New(context.Background(),
-		http.WithAddress(endpoint),
-		http.WithTimeout(5*time.Minute),
-		http.WithLogLevel(0), // Disable internal logging
+	client, err := httpclient.New(context.Background(),
+		httpclient.WithAddress(fullEndpoint),
+		httpclient.WithHTTPClient(httpClient),
+		httpclient.WithTimeout(5*time.Minute),
+		httpclient.WithLogLevel(0), // Disable internal logging
 	)
 	if err != nil {
 		logger.WithError(err).Fatal("Failed to create HTTP client")

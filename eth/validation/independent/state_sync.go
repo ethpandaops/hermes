@@ -62,11 +62,13 @@ type BeaconStateSyncer struct {
 func NewBeaconStateSyncer(
 	logger *logrus.Logger,
 	beaconEndpoint string,
+	port int,
+	useTLS bool,
 	updateInterval time.Duration,
 ) *BeaconStateSyncer {
 	return &BeaconStateSyncer{
 		logger:         logger,
-		provider:       NewHTTPStateProvider(beaconEndpoint),
+		provider:       NewHTTPStateProvider(beaconEndpoint, port, useTLS),
 		committees:     make(map[common.Epoch]map[primitives.CommitteeIndex]*common.CommitteeAssignment),
 		updateInterval: updateInterval,
 		stopCh:         make(chan struct{}),
