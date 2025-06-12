@@ -168,6 +168,7 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 	disc, err := NewDiscovery(privKey, &DiscoveryConfig{
 		GenesisConfig: cfg.GenesisConfig,
 		NetworkConfig: cfg.NetworkConfig,
+		SubnetConfigs: cfg.SubnetConfigs,
 		Addr:          cfg.Devp2pHost,
 		UDPPort:       cfg.Devp2pPort,
 		TCPPort:       cfg.Libp2pPort,
@@ -181,13 +182,14 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 
 	// initialize the request-response protocol handlers
 	reqRespCfg := &ReqRespConfig{
-		ForkDigest:   cfg.ForkDigest,
-		Encoder:      cfg.RPCEncoder,
-		DataStream:   ds,
-		ReadTimeout:  cfg.BeaconConfig.TtfbTimeoutDuration(),
-		WriteTimeout: cfg.BeaconConfig.RespTimeoutDuration(),
-		Tracer:       cfg.Tracer,
-		Meter:        cfg.Meter,
+		ForkDigest:    cfg.ForkDigest,
+		Encoder:       cfg.RPCEncoder,
+		DataStream:    ds,
+		ReadTimeout:   cfg.BeaconConfig.TtfbTimeoutDuration(),
+		WriteTimeout:  cfg.BeaconConfig.RespTimeoutDuration(),
+		SubnetConfigs: cfg.SubnetConfigs,
+		Tracer:        cfg.Tracer,
+		Meter:         cfg.Meter,
 	}
 
 	reqResp, err := NewReqResp(h, reqRespCfg)
@@ -345,6 +347,16 @@ func (n *Node) initMetrics(cfg *NodeConfig) (err error) {
 // OnEvent registers a callback that is executed when an event is received.
 func (n *Node) OnEvent(cb func(ctx context.Context, event *host.TraceEvent)) {
 	n.eventCallbacks = append(n.eventCallbacks, cb)
+}
+
+// UpdateAttestationSubnets updates the attestation subnets in the metadata based on current configuration
+func (n *Node) UpdateAttestationSubnets() {
+	if n.cfg.SubnetConfigs == nil {
+		return
+	}
+	
+	attnets := createAttnetsBitvector(n.cfg.SubnetConfigs)
+	n.reqResp.UpdateAttnets(attnets)
 }
 
 // Start starts the listening process.

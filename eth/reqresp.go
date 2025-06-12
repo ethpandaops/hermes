@@ -47,6 +47,9 @@ type ReqRespConfig struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 
+	// Subnet configuration for attestation subnets
+	SubnetConfigs map[string]*SubnetConfig
+
 	// Telemetry accessors
 	Tracer trace.Tracer
 	Meter  metric.Meter
@@ -73,20 +76,37 @@ type ReqResp struct {
 
 type ContextStreamHandler func(context.Context, network.Stream) (map[string]any, error)
 
+// createAttnetsBitvector creates an attestation bitvector from subnet configuration
+func createAttnetsBitvector(subnetConfigs map[string]*SubnetConfig) bitfield.Bitvector64 {
+	attnets := bitfield.NewBitvector64()
+	
+	if attestationConfig, exists := subnetConfigs["attestation"]; exists {
+		subnets := GetSubscribedSubnets(attestationConfig, 64)
+		for _, subnet := range subnets {
+			attnets.SetBitAt(uint64(subnet), true)
+		}
+	} else {
+		// Default to all subnets if no config
+		for i := uint64(0); i < 64; i++ {
+			attnets.SetBitAt(i, true)
+		}
+	}
+	
+	return attnets
+}
+
 func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("req resp server config must not be nil")
 	}
 
+	// Create attestation bitvector from subnet configuration
+	attnets := createAttnetsBitvector(cfg.SubnetConfigs)
+	
 	md := &pb.MetaDataV1{
 		SeqNumber: 0,
-		Attnets:   bitfield.NewBitvector64(),
+		Attnets:   attnets,
 		Syncnets:  bitfield.Bitvector4{byte(0x00)},
-	}
-
-	// fake to support all attnets
-	for i := uint64(0); i < md.Attnets.Len(); i++ {
-		md.Attnets.SetBitAt(i, true)
 	}
 
 	p := &ReqResp{
@@ -126,6 +146,33 @@ func (r *ReqResp) SetMetaData(seq uint64) {
 		Attnets:   r.metaData.Attnets,
 		Syncnets:  r.metaData.Syncnets,
 	}
+}
+
+// UpdateAttnets updates the attestation subnet bitvector in metadata
+func (r *ReqResp) UpdateAttnets(attnets bitfield.Bitvector64) {
+	r.metaDataMu.Lock()
+	defer r.metaDataMu.Unlock()
+	
+	// Only update if actually changed
+	if !bytes.Equal(r.metaData.Attnets.Bytes(), attnets.Bytes()) {
+		r.metaData = &pb.MetaDataV1{
+			SeqNumber: r.metaData.SeqNumber + 1,
+			Attnets:   attnets,
+			Syncnets:  r.metaData.Syncnets,
+		}
+		
+		slog.Info("Updated attestation subnets in metadata",
+			"seq_number", r.metaData.SeqNumber,
+			"attnets", hex.EncodeToString(attnets.Bytes()))
+	}
+}
+
+// GetCurrentAttnets returns the current attestation subnet configuration
+func (r *ReqResp) GetCurrentAttnets() bitfield.Bitvector64 {
+	r.metaDataMu.RLock()
+	defer r.metaDataMu.RUnlock()
+	
+	return r.metaData.Attnets
 }
 
 func (r *ReqResp) SetStatus(status *pb.Status) {
