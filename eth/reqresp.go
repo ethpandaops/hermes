@@ -80,16 +80,21 @@ type ContextStreamHandler func(context.Context, network.Stream) (map[string]any,
 func createAttnetsBitvector(subnetConfigs map[string]*SubnetConfig) bitfield.Bitvector64 {
 	attnets := bitfield.NewBitvector64()
 	
-	if attestationConfig, exists := subnetConfigs["attestation"]; exists {
-		subnets := GetSubscribedSubnets(attestationConfig, 64)
-		for _, subnet := range subnets {
-			attnets.SetBitAt(uint64(subnet), true)
-		}
+	// Get attestation subnet config (may be nil)
+	attestationConfig := subnetConfigs[p2p.GossipAttestationMessage]
+	
+	// GetSubscribedSubnets handles nil config by returning all subnets
+	subnets := GetSubscribedSubnets(attestationConfig, 64)
+	for _, subnet := range subnets {
+		attnets.SetBitAt(uint64(subnet), true)
+	}
+	
+	if attestationConfig == nil {
+		slog.Debug("No attestation subnet config provided, advertising all 64 subnets in metadata")
 	} else {
-		// Default to all subnets if no config
-		for i := uint64(0); i < 64; i++ {
-			attnets.SetBitAt(i, true)
-		}
+		slog.Debug("Attestation subnet metadata configured", 
+			"type", attestationConfig.Type,
+			"subnet_count", len(subnets))
 	}
 	
 	return attnets
