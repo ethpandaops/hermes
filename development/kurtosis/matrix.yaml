@@ -10,3 +10,5 @@ participants_matrix:
     - cl_type: grandine
 additional_services:
   - apache
+
+global_log_level: "debug"

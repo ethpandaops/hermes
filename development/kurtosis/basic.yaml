@@ -5,3 +5,5 @@ participants_matrix:
     - cl_type: prysm
 additional_services:
   - apache
+
+global_log_level: "debug"

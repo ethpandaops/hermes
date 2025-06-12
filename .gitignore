@@ -154,3 +154,6 @@ fabric.properties
 */venv
 build/
 s3_local/data/
+
+
+*test*.log

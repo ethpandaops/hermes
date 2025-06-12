@@ -149,6 +149,9 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("new libp2p host: %w", err)
 	}
 	slog.Info("Initialized new libp2p Host", tele.LogAttrPeerID(h.ID()), "maddrs", h.Addrs())
+	
+	// Print peer ID in a clear format for scripts to parse
+	slog.Info(fmt.Sprintf("HERMES_PEER_ID=%s", h.ID().String()))
 
 	// initialize ethereum node
 	privKey, err := cfg.ECDSAPrivateKey()
