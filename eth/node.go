@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	eth "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
@@ -172,6 +174,16 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("new discovery service: %w", err)
 	}
 	slog.Info("Initialized new devp2p Node", "enr", disc.node.Node().String())
+	
+	// Update discovery ENR with actual libp2p port if it was initially set to 0
+	if cfg.Libp2pPort == 0 {
+		// Extract the actual port from the libp2p host's listening addresses
+		actualPort := extractTCPPortFromAddrs(h.Addrs())
+		if actualPort > 0 {
+			disc.UpdateTCPPort(actualPort)
+			slog.Info("Updated discovery ENR", "enr", disc.node.Node().String())
+		}
+	}
 
 	// initialize the request-response protocol handlers
 	reqRespCfg := &ReqRespConfig{
@@ -536,4 +548,23 @@ func (n *Node) startDataStream(ctx context.Context) (func(), error) {
 	}
 
 	return cleanupFn, nil
+}
+
+// extractTCPPortFromAddrs extracts the TCP port from the first TCP multiaddr in the list.
+// Returns 0 if no TCP port is found.
+func extractTCPPortFromAddrs(addrs []ma.Multiaddr) int {
+	for _, addr := range addrs {
+		addrStr := addr.String()
+		// Look for TCP addresses like /ip4/127.0.0.1/tcp/55554
+		if strings.Contains(addrStr, "/tcp/") {
+			parts := strings.Split(addrStr, "/tcp/")
+			if len(parts) >= 2 {
+				portStr := strings.Split(parts[1], "/")[0] // Get port, ignore any additional components
+				if port, err := strconv.Atoi(portStr); err == nil {
+					return port
+				}
+			}
+		}
+	}
+	return 0
 }

@@ -272,3 +272,11 @@ func NewDiscoveredPeer(node *enode.Node) (*DiscoveredPeer, error) {
 
 	return pi, nil
 }
+
+// UpdateTCPPort updates the TCP port in the local node's ENR entry.
+// This is useful when the port is initially set to 0 and the OS assigns
+// a random port that needs to be advertised in the discovery network.
+func (d *Discovery) UpdateTCPPort(port int) {
+	d.node.Set(enr.TCP(port))
+	slog.Info("Updated discovery ENR with actual TCP port", "port", port)
+}
