@@ -15,11 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 import yaml
 
-try:
-    from claude_code_sdk import query, ClaudeCodeOptions
-except ImportError:
-    print("Error: claude_code_sdk not installed. Install with: pip install claude-code-sdk")
-    sys.exit(1)
+# No longer using claude_code_sdk - using subprocess directly
 
 # Import from file with hyphen in name
 import importlib.util
@@ -207,32 +203,79 @@ Please provide:
 Remember: Each client may have slightly different p2p behavior, handshake requirements, or discovery mechanisms.
 """
         
-        options = ClaudeCodeOptions(
-            max_turns=3,
-            system_prompt="""You are an expert in Ethereum consensus layer protocols and p2p networking. 
-You are helping debug why Hermes cannot connect to certain consensus clients.
-You have deep knowledge of libp2p, discv5, and consensus layer specifications.
-When you make changes, be precise and test-oriented. Focus on the root cause.
-
-IMPORTANT: Never run the Python test script itself or Hermes directly. Only make code changes.
-You may run 'go build ./cmd/hermes' to verify compilation, but nothing else.""",
-            cwd=self.project_root,
-            allowed_tools=["Read", "Write", "Bash", "Grep", "Glob"],
-            permission_mode="bypassPermissions"
-        )
+        # Use subprocess to call claude directly, similar to the reference script
+        cmd = [
+            "claude", "-p", "--dangerously-skip-permissions",
+            "--verbose", "--output-format", "stream-json",
+            prompt
+        ]
         
         try:
-            response = ""
-            async for message in query(prompt=prompt, options=options):
-                response = message  # Get the last message
+            self.log("Running Claude analysis...", "INFO")
+            
+            # Run the claude command
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.project_root
+            )
+            
+            response_content = []
+            
+            # Read output line by line
+            async for line in process.stdout:
+                line_str = line.decode('utf-8').strip()
+                if not line_str:
+                    continue
+                    
+                try:
+                    # Parse JSON output
+                    json_obj = json.loads(line_str)
+                    
+                    # Extract content from assistant messages
+                    if isinstance(json_obj, dict) and json_obj.get('type') == 'assistant':
+                        message = json_obj.get('message', {})
+                        if 'content' in message and isinstance(message['content'], list):
+                            for item in message['content']:
+                                if isinstance(item, dict) and item.get('type') == 'text':
+                                    text = item.get('text', '').strip()
+                                    if text:
+                                        response_content.append(text)
+                                        
+                except json.JSONDecodeError:
+                    # Not JSON, skip it
+                    pass
+                except Exception as e:
+                    self.log(f"Error parsing Claude output: {e}", "WARNING")
+            
+            # Wait for process to complete
+            await process.wait()
+            
+            if process.returncode != 0:
+                stderr = await process.stderr.read()
+                self.log(f"Claude command failed with exit code {process.returncode}", "ERROR")
+                self.log(f"Error output: {stderr.decode('utf-8')}", "ERROR")
+                sys.exit(1)
+            
+            # Join all response content
+            response = '\n'.join(response_content)
+            
+            if not response:
+                self.log("No response received from Claude", "ERROR")
+                sys.exit(1)
                 
             return response
+            
         except Exception as e:
             self.log(f"Claude analysis failed: {e}", "ERROR")
+            self.log(f"Error details: {type(e).__name__}: {str(e)}", "ERROR")
+            import traceback
+            self.log(f"Traceback:\n{traceback.format_exc()}", "ERROR")
             self.log("Exiting due to Claude failure.", "ERROR")
             sys.exit(1)
             
-    def extract_test_results(self, log_file: str, json_file: str) -> dict:
+    def extract_test_results(self, log_file: str, json_file: str = None) -> dict:
         """Extract relevant test results for Claude analysis."""
         results = {
             "connected_clients": [],
@@ -312,8 +355,8 @@ You may run 'go build ./cmd/hermes' to verify compilation, but nothing else.""",
             "iteration_dir": str(iter_dir)
         }
         
-        # Get initial git status
-        initial_git_status = self.get_git_status()
+        # Get initial git status (for tracking changes)
+        self.get_git_status()
         
         # Run initial test
         log_file = str(iter_dir / "diagnostic_test.log")
