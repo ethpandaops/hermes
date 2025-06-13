@@ -21,7 +21,15 @@ except ImportError:
     print("Error: claude_code_sdk not installed. Install with: pip install claude-code-sdk")
     sys.exit(1)
 
-from test_matrix import HermesMatrixTest
+# Import from file with hyphen in name
+import importlib.util
+spec = importlib.util.spec_from_file_location(
+    "test_matrix", 
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "test-matrix.py")
+)
+test_matrix = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(test_matrix)
+HermesMatrixTest = test_matrix.HermesMatrixTest
 
 
 class SelfHealingHermesTest:
@@ -210,7 +218,7 @@ IMPORTANT: Never run the Python test script itself or Hermes directly. Only make
 You may run 'go build ./cmd/hermes' to verify compilation, but nothing else.""",
             cwd=self.project_root,
             allowed_tools=["Read", "Write", "Bash", "Grep", "Glob"],
-            permission_mode="auto"
+            permission_mode="bypassPermissions"
         )
         
         try:
@@ -221,7 +229,8 @@ You may run 'go build ./cmd/hermes' to verify compilation, but nothing else.""",
             return response
         except Exception as e:
             self.log(f"Claude analysis failed: {e}", "ERROR")
-            return None
+            self.log("Exiting due to Claude failure.", "ERROR")
+            sys.exit(1)
             
     def extract_test_results(self, log_file: str, json_file: str) -> dict:
         """Extract relevant test results for Claude analysis."""

@@ -38,6 +38,7 @@ class HermesMatrixTest:
         self.expected_clients = []  # Will be discovered from network
         self.discovered_participants = {}  # service_name -> client_type
         self.hermes_peer_id = None  # Will be extracted from logs
+        self.beacon_peer_ids = {}  # service_name -> peer_id, populated at startup
         
         # Threading for output processing
         self.output_queue = queue.Queue()
@@ -513,16 +514,65 @@ class HermesMatrixTest:
                             self.client_types[peer_id] = client
                             break
                             
-    def get_active_peers(self, timeout: int = 60) -> Set[str]:
-        """Get peers that have been seen recently."""
+    def get_active_peers(self, timeout: int = 30) -> Set[str]:
+        """Get peers that have been seen recently.
+        Check all known beacon peer IDs, not just ones we've seen events from.
+        """
         current_time = time.time()
         active_peers = set()
         
+        # Check all beacon node peer IDs we collected at startup
+        for service_name, peer_id in self.beacon_peer_ids.items():
+            if peer_id and peer_id in self.peer_last_seen:
+                if current_time - self.peer_last_seen[peer_id] < timeout:
+                    active_peers.add(peer_id)
+                    
+        # Also check any other peers we've seen (in case of new connections)
         for peer_id, last_seen in self.peer_last_seen.items():
             if current_time - last_seen < timeout:
                 active_peers.add(peer_id)
                 
         return active_peers
+    
+    def get_peer_summary_from_logs(self) -> tuple[int, dict]:
+        """Extract the latest peer summary from Hermes logs.
+        Returns (total_peers, agent_counts)
+        """
+        try:
+            # Look for the most recent "Peer Agent Summary" line in the log
+            with open(self.log_file, 'r') as f:
+                lines = f.readlines()
+                
+            # Search from the end for the most recent summary
+            for line in reversed(lines):
+                if "Peer Agent Summary" in line and "total_peers=" in line:
+                    # Parse the line
+                    # Example: info  | 13:39:15.002263 | Peer Agent Summary                        total_peers=6 agents="grandine: 1, lighthouse: 1, lodestar: 1, nimbus: 1, prysm: 1, teku: 1"
+                    try:
+                        # Extract total_peers
+                        total_match = re.search(r'total_peers=(\d+)', line)
+                        total_peers = int(total_match.group(1)) if total_match else 0
+                        
+                        # Extract agents
+                        agents_match = re.search(r'agents="([^"]+)"', line)
+                        agent_counts = {}
+                        if agents_match:
+                            agents_str = agents_match.group(1)
+                            # Parse "grandine: 1, lighthouse: 1, ..."
+                            for agent_part in agents_str.split(', '):
+                                if ':' in agent_part:
+                                    agent_name, count = agent_part.split(': ')
+                                    agent_counts[agent_name.strip()] = int(count.strip())
+                        
+                        return total_peers, agent_counts
+                    except Exception as e:
+                        self.log(f"Failed to parse peer summary line: {e}", "WARN")
+                        continue
+                        
+        except Exception as e:
+            self.log(f"Failed to read peer summary from logs: {e}", "WARN")
+            
+        return 0, {}
         
     def get_connected_clients(self) -> Set[str]:
         """Get the set of client types we're connected to."""
@@ -569,9 +619,17 @@ class HermesMatrixTest:
                 
             # Report active peers every 15 seconds
             if elapsed - last_peer_report >= peer_report_interval:
-                active_peers = self.get_active_peers()
-                connected_clients = self.get_connected_clients()
-                self.log(f"[{elapsed}s] Active peers: {len(active_peers)} (clients: {sorted(connected_clients)})")
+                # Use peer summary from logs for accurate counts
+                total_peers, agent_counts = self.get_peer_summary_from_logs()
+                if total_peers > 0:
+                    # Use the peer summary data
+                    connected_clients = set(agent_counts.keys())
+                    self.log(f"[{elapsed}s] Active peers: {total_peers} (clients: {sorted(connected_clients)})")
+                else:
+                    # Fall back to old method if no peer summary found
+                    active_peers = self.get_active_peers()
+                    connected_clients = self.get_connected_clients()
+                    self.log(f"[{elapsed}s] Active peers: {len(active_peers)} (clients: {sorted(connected_clients)})")
                 
                 # Show which clients we're missing
                 missing_clients = set(self.expected_clients) - connected_clients
@@ -587,7 +645,12 @@ class HermesMatrixTest:
                 self.log(f"Progress: {elapsed}s / {self.duration}s ({remaining}s remaining)")
                 self.log(f"Total events: {sum(self.event_counts.values())}")
                 self.log(f"Unique peers: {len(self.peer_connections)}")
-                self.log(f"Active peers (60s): {len(self.get_active_peers())}")
+                # Get peer summary for accurate count
+                total_peers, _ = self.get_peer_summary_from_logs()
+                if total_peers > 0:
+                    self.log(f"Active peers: {total_peers}")
+                else:
+                    self.log(f"Active peers (60s): {len(self.get_active_peers())}")
                 
                 # Show top event types
                 top_events = sorted(self.event_counts.items(), key=lambda x: x[1], reverse=True)[:5]
@@ -767,7 +830,14 @@ class HermesMatrixTest:
         self.log("")
         
         total_peers = len(self.peer_connections)
-        active_peers = len(self.get_active_peers())
+        # Get peer summary for accurate count
+        peer_summary_total, agent_counts = self.get_peer_summary_from_logs()
+        if peer_summary_total > 0:
+            active_peers = peer_summary_total
+            connected_clients = set(agent_counts.keys())
+        else:
+            active_peers = len(self.get_active_peers())
+            connected_clients = self.get_connected_clients()
         total_events = sum(self.event_counts.values())
         
         self.log("Event counts:")
@@ -779,8 +849,7 @@ class HermesMatrixTest:
         self.log(f"Active peers (last 60s): {active_peers}")
         self.log(f"Total events: {total_events}")
         
-        # Check client coverage
-        connected_clients = self.get_connected_clients()
+        # Check client coverage - already retrieved above
         
         self.log("")
         self.log("Client coverage:")
@@ -861,6 +930,14 @@ class HermesMatrixTest:
                 self.log("Using existing network, skipping network creation")
                 
             self.get_service_info()
+            
+            # Fetch and store beacon peer IDs
+            self.log("Fetching peer IDs from beacon nodes...")
+            self.beacon_peer_ids = self.get_beacon_node_peer_ids()
+            for service, peer_id in self.beacon_peer_ids.items():
+                if peer_id:
+                    self.log(f"  {service}: {peer_id}")
+            
             self.start_hermes()
             
             test_passed = self.run_test()
