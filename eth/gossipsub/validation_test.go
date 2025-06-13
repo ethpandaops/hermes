@@ -1,12 +1,12 @@
-package validation_test
+package gossipsub_test
 
 import (
 	"testing"
 	"time"
 
-	"github.com/probe-lab/hermes/eth/validation"
-	"github.com/probe-lab/hermes/eth/validation/common"
-	"github.com/probe-lab/hermes/eth/validation/independent"
+	"github.com/probe-lab/hermes/eth/gossipsub"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/independent"
 	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +18,7 @@ func TestValidationRouter(t *testing.T) {
 	logger.SetLevel(logrus.DebugLevel)
 
 	t.Run("IndependentMode", func(t *testing.T) {
-		config := &validation.RouterConfig{
+		config := &gossipsub.RouterConfig{
 			Mode:   common.ModeIndependent,
 			Logger: logger,
 			IndependentConfig: &independent.IndependentConfig{
@@ -33,7 +33,7 @@ func TestValidationRouter(t *testing.T) {
 		}
 
 		// Test creating router with independent mode
-		router, err := validation.NewRouter(config)
+		router, err := gossipsub.NewRouter(config)
 		require.NoError(t, err)
 		assert.NotNil(t, router)
 

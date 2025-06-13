@@ -1,4 +1,4 @@
-package validation
+package gossipsub
 
 import (
 	"context"
@@ -12,9 +12,9 @@ import (
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/OffchainLabs/prysm/v6/encoding/bytesutil"
-	"github.com/probe-lab/hermes/eth/validation/common"
-	"github.com/probe-lab/hermes/eth/validation/independent"
-	"github.com/probe-lab/hermes/eth/validation/delegated"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/independent"
+	"github.com/probe-lab/hermes/eth/gossipsub/delegated"
 )
 
 func TestValidationIntegration(t *testing.T) {

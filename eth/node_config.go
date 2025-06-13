@@ -273,6 +273,11 @@ type NodeConfig struct {
 
 	// RPC compliance configuration
 	RPCConfig *RPCConfig `yaml:"rpc_config"`
+
+	// Req/Resp handler configuration
+	ReqRespMode         string `yaml:"reqresp_mode" default:"delegated"` // "delegated" or "upstream"
+	UpstreamBeaconURL   string `yaml:"upstream_beacon_url"`              // Beacon API URL for upstream mode
+	StatusPollInterval  time.Duration `yaml:"status_poll_interval" default:"12s"` // How often to poll status in upstream mode
 }
 
 // Validate validates the [NodeConfig] [Node] configuration.
@@ -424,6 +429,20 @@ func (n *NodeConfig) Validate() error {
 	// Warn if peer count is below recommended minimum
 	if n.MaxPeers < 64 {
 		slog.Warn("Peer count below recommended minimum", "current", n.MaxPeers, "recommended_min", 64)
+	}
+
+	// Validate req/resp configuration
+	if n.ReqRespMode != "" && n.ReqRespMode != "delegated" && n.ReqRespMode != "upstream" {
+		return fmt.Errorf("reqresp mode must be 'delegated' or 'upstream', got %s", n.ReqRespMode)
+	}
+	
+	if n.ReqRespMode == "upstream" {
+		if n.UpstreamBeaconURL == "" {
+			return fmt.Errorf("upstream beacon URL required for upstream mode")
+		}
+		if n.StatusPollInterval <= 0 {
+			return fmt.Errorf("status poll interval must be positive")
+		}
 	}
 
 	return nil

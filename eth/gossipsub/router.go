@@ -1,4 +1,4 @@
-package validation
+package gossipsub
 
 import (
 	"context"
@@ -12,9 +12,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	
-	"github.com/probe-lab/hermes/eth/validation/common"
-	"github.com/probe-lab/hermes/eth/validation/delegated"
-	"github.com/probe-lab/hermes/eth/validation/independent"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/delegated"
+	"github.com/probe-lab/hermes/eth/gossipsub/independent"
 )
 
 // RouterConfig holds configuration for the validation router

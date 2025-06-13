@@ -16,7 +16,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
-	"github.com/probe-lab/hermes/eth/validation/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
 )
 
 // HTTPStateProvider fetches beacon state from HTTP API using attestant client

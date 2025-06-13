@@ -84,14 +84,14 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 	valid := true
 	ps := n.host.Peerstore()
 
-	st, err := n.reqResp.Status(ctx, pid)
+	st, err := n.Status(ctx, pid)
 	if err != nil {
 		valid = false
 	} else {
-		if err := n.reqResp.Ping(ctx, pid); err != nil {
+		if err := n.Ping(ctx, pid); err != nil {
 			valid = false
 		} else {
-			md, err := n.reqResp.MetaData(ctx, pid)
+			md, err := n.MetaData(ctx, pid)
 			if err != nil {
 				valid = false
 			} else {

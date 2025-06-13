@@ -14,7 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
-	"github.com/probe-lab/hermes/eth/validation/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
 )
 
 // IndependentValidator performs full in-process validation of gossipsub messages.

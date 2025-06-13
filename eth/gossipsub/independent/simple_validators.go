@@ -10,7 +10,7 @@ import (
 	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
 	
-	"github.com/probe-lab/hermes/eth/validation/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
 )
 
 // VoluntaryExitValidator validates voluntary exit messages

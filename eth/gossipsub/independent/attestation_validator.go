@@ -1,7 +1,7 @@
 package independent
 
 import (
-	"github.com/probe-lab/hermes/eth/validation/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
 	"context"
 	"fmt"
 

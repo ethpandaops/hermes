@@ -9,7 +9,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/attestantio/go-eth2-client/spec/altair"
 	"github.com/attestantio/go-eth2-client/spec/phase0"
-	"github.com/probe-lab/hermes/eth/validation/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
 )
 
 // SyncCommitteeMessageValidator validates sync committee messages

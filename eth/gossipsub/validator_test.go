@@ -1,4 +1,4 @@
-package validation
+package gossipsub
 
 import (
 	"context"
@@ -12,9 +12,9 @@ import (
 	"github.com/OffchainLabs/prysm/v6/encoding/bytesutil"
 	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
 	
-	"github.com/probe-lab/hermes/eth/validation/common"
-	"github.com/probe-lab/hermes/eth/validation/independent"
-	"github.com/probe-lab/hermes/eth/validation/delegated"
+	"github.com/probe-lab/hermes/eth/gossipsub/common"
+	"github.com/probe-lab/hermes/eth/gossipsub/independent"
+	"github.com/probe-lab/hermes/eth/gossipsub/delegated"
 )
 
 // Test basic validator creation and configuration
