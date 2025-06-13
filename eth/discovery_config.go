@@ -17,11 +17,13 @@ import (
 type DiscoveryConfig struct {
 	GenesisConfig *GenesisConfig
 	NetworkConfig *params.NetworkConfig
-	Addr          string
-	UDPPort       int
-	TCPPort       int
-	Tracer        trace.Tracer
-	Meter         metric.Meter
+	SubnetConfigs map[string]*SubnetConfig
+	Addr                 string
+	UDPPort              int
+	TCPPort              int
+	AllowPrivateNetworks bool
+	Tracer               trace.Tracer
+	Meter                metric.Meter
 }
 
 // enrEth2Entry generates an Ethereum 2.0 entry for the Ethereum Node Record
@@ -61,10 +63,7 @@ func (d *DiscoveryConfig) enrEth2Entry() (enr.Entry, error) {
 }
 
 func (d *DiscoveryConfig) enrAttnetsEntry() enr.Entry {
-	bitV := bitfield.NewBitvector64()
-	for i := uint64(0); i < bitV.Len(); i++ {
-		bitV.SetBitAt(i, true)
-	}
+	bitV := createAttnetsBitvector(d.SubnetConfigs)
 	return enr.WithEntry(d.NetworkConfig.AttSubnetKey, bitV.Bytes())
 }
 

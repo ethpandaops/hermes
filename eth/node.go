@@ -6,17 +6,25 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	eth "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	gk "github.com/dennis-tra/go-kinesis"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/sirupsen/logrus"
 	"github.com/thejerf/suture/v4"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/probe-lab/hermes/eth/validation"
+	"github.com/probe-lab/hermes/eth/validation/common"
+	"github.com/probe-lab/hermes/eth/validation/delegated"
+	"github.com/probe-lab/hermes/eth/validation/independent"
 	"github.com/probe-lab/hermes/host"
 	"github.com/probe-lab/hermes/tele"
 )
@@ -62,6 +70,9 @@ type Node struct {
 
 	// eventCallbacks contains a list of callbacks that are executed when an event is received
 	eventCallbacks []func(ctx context.Context, event *host.TraceEvent)
+
+	// Validation router for gossipsub message validation
+	validationRouter *validation.Router
 }
 
 // NewNode initializes a new [Node] using the provided configuration.
@@ -149,6 +160,9 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("new libp2p host: %w", err)
 	}
 	slog.Info("Initialized new libp2p Host", tele.LogAttrPeerID(h.ID()), "maddrs", h.Addrs())
+	
+	// Print peer ID in a clear format for scripts to parse
+	slog.Info(fmt.Sprintf("HERMES_PEER_ID=%s", h.ID().String()))
 
 	// initialize ethereum node
 	privKey, err := cfg.ECDSAPrivateKey()
@@ -159,26 +173,39 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 	disc, err := NewDiscovery(privKey, &DiscoveryConfig{
 		GenesisConfig: cfg.GenesisConfig,
 		NetworkConfig: cfg.NetworkConfig,
-		Addr:          cfg.Devp2pHost,
-		UDPPort:       cfg.Devp2pPort,
-		TCPPort:       cfg.Libp2pPort,
-		Tracer:        cfg.Tracer,
-		Meter:         cfg.Meter,
+		SubnetConfigs: cfg.SubnetConfigs,
+		Addr:                 cfg.Devp2pHost,
+		UDPPort:              cfg.Devp2pPort,
+		TCPPort:              cfg.Libp2pPort,
+		AllowPrivateNetworks: cfg.AllowPrivateNetworks,
+		Tracer:               cfg.Tracer,
+		Meter:                cfg.Meter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new discovery service: %w", err)
 	}
 	slog.Info("Initialized new devp2p Node", "enr", disc.node.Node().String())
+	
+	// Update discovery ENR with actual libp2p port if it was initially set to 0
+	if cfg.Libp2pPort == 0 {
+		// Extract the actual port from the libp2p host's listening addresses
+		actualPort := extractTCPPortFromAddrs(h.Addrs())
+		if actualPort > 0 {
+			disc.UpdateTCPPort(actualPort)
+			slog.Info("Updated discovery ENR", "enr", disc.node.Node().String())
+		}
+	}
 
 	// initialize the request-response protocol handlers
 	reqRespCfg := &ReqRespConfig{
-		ForkDigest:   cfg.ForkDigest,
-		Encoder:      cfg.RPCEncoder,
-		DataStream:   ds,
-		ReadTimeout:  cfg.BeaconConfig.TtfbTimeoutDuration(),
-		WriteTimeout: cfg.BeaconConfig.RespTimeoutDuration(),
-		Tracer:       cfg.Tracer,
-		Meter:        cfg.Meter,
+		ForkDigest:    cfg.ForkDigest,
+		Encoder:       cfg.RPCEncoder,
+		DataStream:    ds,
+		ReadTimeout:   cfg.BeaconConfig.TtfbTimeoutDuration(),
+		WriteTimeout:  cfg.BeaconConfig.RespTimeoutDuration(),
+		SubnetConfigs: cfg.SubnetConfigs,
+		Tracer:        cfg.Tracer,
+		Meter:         cfg.Meter,
 	}
 
 	reqResp, err := NewReqResp(h, reqRespCfg)
@@ -338,6 +365,16 @@ func (n *Node) OnEvent(cb func(ctx context.Context, event *host.TraceEvent)) {
 	n.eventCallbacks = append(n.eventCallbacks, cb)
 }
 
+// UpdateAttestationSubnets updates the attestation subnets in the metadata based on current configuration
+func (n *Node) UpdateAttestationSubnets() {
+	if n.cfg.SubnetConfigs == nil {
+		return
+	}
+	
+	attnets := createAttnetsBitvector(n.cfg.SubnetConfigs)
+	n.reqResp.UpdateAttnets(attnets)
+}
+
 // Start starts the listening process.
 func (n *Node) Start(ctx context.Context) error {
 	defer logDeferErr(n.host.Close, "Failed closing libp2p host")
@@ -348,23 +385,30 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 	defer dsCleanupFn()
 
-	// identify the beacon node. We only have the host/port of the Beacon API
-	// endpoint. If we want to establish a P2P connection, we need its peer ID
-	// and dedicated p2p port. We call the identity endpoint to get this information
-	slog.Info("Getting Prysm P2P Identity...")
-	addrInfo, err := n.pryClient.Identity(ctx)
-	if err != nil {
-		return fmt.Errorf("get prysm node p2p addr info: %w", err)
-	}
+	// In independent validation mode, we only need HTTP access to Prysm for beacon state
+	// Skip P2P connection setup
+	var addrInfo *peer.AddrInfo
+	if n.cfg.ValidationMode != "independent" {
+		// identify the beacon node. We only have the host/port of the Beacon API
+		// endpoint. If we want to establish a P2P connection, we need its peer ID
+		// and dedicated p2p port. We call the identity endpoint to get this information
+		slog.Info("Getting Prysm P2P Identity...")
+		addrInfo, err = n.pryClient.Identity(ctx)
+		if err != nil {
+			return fmt.Errorf("get prysm node p2p addr info: %w", err)
+		}
 
-	slog.Info("Prysm P2P Identity:", tele.LogAttrPeerID(addrInfo.ID))
-	for i, maddr := range addrInfo.Addrs {
-		slog.Info(fmt.Sprintf("  [%d] %s", i, maddr.String()))
-	}
+		slog.Info("Prysm P2P Identity:", tele.LogAttrPeerID(addrInfo.ID))
+		for i, maddr := range addrInfo.Addrs {
+			slog.Info(fmt.Sprintf("  [%d] %s", i, maddr.String()))
+		}
 
-	// cache the address information on the node
-	n.pryInfo = addrInfo
-	n.reqResp.delegate = addrInfo.ID
+		// cache the address information on the node
+		n.pryInfo = addrInfo
+		n.reqResp.delegate = addrInfo.ID
+	} else {
+		slog.Info("Running in independent validation mode - skipping P2P connection to Prysm")
+	}
 
 	// Now we have the beacon node's identity. The next thing we need is its
 	// current status. The status consists of the ForkDigest, FinalizedRoot,
@@ -400,68 +444,89 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 
 	// initialize GossipSub
-	n.pubSub.gs, err = n.host.InitGossipSub(ctx, n.cfg.pubsubOptions(n, actVals)...)
+	pubsubOpts := n.cfg.pubsubOptions(n, actVals)
+
+	// Add validation if configured
+	if n.cfg.ValidationMode == "independent" || n.cfg.ValidationMode == "delegated" {
+		validationOpts, err := n.setupValidation(ctx)
+		if err != nil {
+			return fmt.Errorf("setup validation: %w", err)
+		}
+		pubsubOpts = append(pubsubOpts, validationOpts...)
+	}
+
+	n.pubSub.gs, err = n.host.InitGossipSub(ctx, pubsubOpts...)
 	if err != nil {
 		return fmt.Errorf("init gossip sub: %w", err)
 	}
 
-	// Create a connection signal that fires when the Prysm node has connected
-	// to us. Prysm will try this periodically AFTER we have registered ourselves
-	// as a trusted peer. Therefore, we register the signal first and only
-	// afterward add ourselves as a trusted peer to not miss the signal
-	// https://github.com/prysmaticlabs/prysm/issues/13659
-	timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	connSignal := n.host.ConnSignal(timeoutCtx, addrInfo.ID)
-
-	// register ourselves as a trusted peer by submitting our private ip address
-	var trustedMaddr ma.Multiaddr
-	if n.cfg.LocalTrustedAddr {
-		trustedMaddr, err = n.host.LocalListenMaddr()
-		if err != nil {
-			return err
+	// Register topic validators after pubsub is created
+	if n.validationRouter != nil {
+		if err := n.registerTopicValidators(); err != nil {
+			return fmt.Errorf("register topic validators: %w", err)
 		}
-		slog.Info("Adding ourselves as a trusted peer to Prysm", tele.LogAttrPeerID(n.host.ID()), "on local maddr", trustedMaddr)
-	} else {
-		trustedMaddr, err = n.host.PrivateListenMaddr()
-		if err != nil {
-			return err
+	}
+
+	// Only establish P2P connection if not in independent validation mode
+	if n.cfg.ValidationMode != "independent" && addrInfo != nil {
+		// Create a connection signal that fires when the Prysm node has connected
+		// to us. Prysm will try this periodically AFTER we have registered ourselves
+		// as a trusted peer. Therefore, we register the signal first and only
+		// afterward add ourselves as a trusted peer to not miss the signal
+		// https://github.com/prysmaticlabs/prysm/issues/13659
+		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		connSignal := n.host.ConnSignal(timeoutCtx, addrInfo.ID)
+
+		// register ourselves as a trusted peer by submitting our private ip address
+		var trustedMaddr ma.Multiaddr
+		if n.cfg.LocalTrustedAddr {
+			trustedMaddr, err = n.host.LocalListenMaddr()
+			if err != nil {
+				return err
+			}
+			slog.Info("Adding ourselves as a trusted peer to Prysm", tele.LogAttrPeerID(n.host.ID()), "on local maddr", trustedMaddr)
+		} else {
+			trustedMaddr, err = n.host.PrivateListenMaddr()
+			if err != nil {
+				return err
+			}
+			slog.Info("Adding ourselves as a trusted peer to Prysm", tele.LogAttrPeerID(n.host.ID()), "on priv maddr", trustedMaddr)
 		}
-		slog.Info("Adding ourselves as a trusted peer to Prysm", tele.LogAttrPeerID(n.host.ID()), "on priv maddr", trustedMaddr)
-	}
 
-	if err := n.pryClient.AddTrustedPeer(ctx, n.host.ID(), trustedMaddr); err != nil {
-		return fmt.Errorf("failed adding ourself as trusted peer: %w", err)
-	}
-
-	defer func() {
-		// unregister ourselves as a trusted peer from prysm. Context timeout
-		// is not necessary because the pryClient applies a 5s timeout to each API call
-		slog.Info("Removing ourselves as a trusted peer from Prysm", tele.LogAttrPeerID(n.host.ID()))
-		if err := n.pryClient.RemoveTrustedPeer(context.Background(), n.host.ID()); err != nil { // use new context, as the old one is likely cancelled
-			slog.Warn("failed to remove ourself as a trusted peer", tele.LogAttrError(err))
+		if err := n.pryClient.AddTrustedPeer(ctx, n.host.ID(), trustedMaddr); err != nil {
+			return fmt.Errorf("failed adding ourself as trusted peer: %w", err)
 		}
-	}()
 
-	// register the node itself as the notifiee for network connection events
-	n.host.Network().Notify(n)
+		defer func() {
+			// unregister ourselves as a trusted peer from prysm. Context timeout
+			// is not necessary because the pryClient applies a 5s timeout to each API call
+			slog.Info("Removing ourselves as a trusted peer from Prysm", tele.LogAttrPeerID(n.host.ID()))
+			if err := n.pryClient.RemoveTrustedPeer(context.Background(), n.host.ID()); err != nil { // use new context, as the old one is likely cancelled
+				slog.Warn("failed to remove ourself as a trusted peer", tele.LogAttrError(err))
+			}
+		}()
 
-	slog.Info("Proactively trying to connect to Prysm", tele.LogAttrPeerID(addrInfo.ID), "maddrs", addrInfo.Addrs)
-	if err := n.host.Connect(ctx, *addrInfo); err != nil {
-		slog.Info("Connection to beacon node failed", tele.LogAttrError(err))
-		slog.Info("Waiting for dialback from Prysm node")
+		// register the node itself as the notifiee for network connection events
+		n.host.Network().Notify(n)
+
+		slog.Info("Proactively trying to connect to Prysm", tele.LogAttrPeerID(addrInfo.ID), "maddrs", addrInfo.Addrs)
+		if err := n.host.Connect(ctx, *addrInfo); err != nil {
+			slog.Info("Connection to beacon node failed", tele.LogAttrError(err))
+			slog.Info("Waiting for dialback from Prysm node")
+		}
+
+		// wait for the connection to Prysm, this will pass immediately if the
+		// connection already exists.
+		if err := <-connSignal; err != nil {
+			return fmt.Errorf("failed waiting for Prysm dialback: %w", err)
+		} else {
+			slog.Info("Prysm is connected!", tele.LogAttrPeerID(addrInfo.ID), "maddr", n.host.Peerstore().Addrs(addrInfo.ID))
+		}
+
+		// protect connection to beacon node so that it's not pruned at some point
+		n.host.ConnManager().Protect(addrInfo.ID, "hermes")
 	}
-
-	// wait for the connection to Prysm, this will pass immediately if the
-	// connection already exists.
-	if err := <-connSignal; err != nil {
-		return fmt.Errorf("failed waiting for Prysm dialback: %w", err)
-	} else {
-		slog.Info("Prysm is connected!", tele.LogAttrPeerID(addrInfo.ID), "maddr", n.host.Peerstore().Addrs(addrInfo.ID))
-	}
-
-	// protect connection to beacon node so that it's not pruned at some point
-	n.host.ConnManager().Protect(addrInfo.ID, "hermes")
 
 	// start the discovery service to find peers in the discv5 DHT
 	n.sup.Add(n.disc)
@@ -470,7 +535,10 @@ func (n *Node) Start(ctx context.Context) error {
 	n.sup.Add(n.pubSub)
 
 	// start the peerer service that ensures our registration as a trusted peer
-	n.sup.Add(n.peerer)
+	// Skip in independent mode as we don't need P2P connection to Prysm
+	if n.cfg.ValidationMode != "independent" {
+		n.sup.Add(n.peerer)
+	}
 
 	// start the hermes host to trace gossipsub messages
 	n.sup.Add(n.host)
@@ -493,6 +561,15 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 	n.sup.Add(aw)
 
+	// start peer agent printer if enabled
+	if n.cfg.PrintPeerAgents {
+		pap := &PeerAgentPrinter{
+			host:     n.host,
+			interval: 10 * time.Second,
+		}
+		n.sup.Add(pap)
+	}
+
 	// start all long-running services
 	return n.sup.Serve(ctx)
 }
@@ -503,6 +580,50 @@ func logDeferErr(fn func() error, onErrMsg string) {
 	if err := fn(); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Warn(onErrMsg, tele.LogAttrError(err))
 	}
+}
+
+// registerTopicValidators registers all topic validators with pubsub
+func (n *Node) registerTopicValidators() error {
+	topics := []struct {
+		base        string
+		msgType     common.MessageType
+		hasSubnets  bool
+		subnetCount int
+	}{
+		{"beacon_block", common.MessageBeaconBlock, false, 0},
+		{"beacon_aggregate_and_proof", common.MessageAggregateAndProof, false, 0},
+		{"voluntary_exit", common.MessageVoluntaryExit, false, 0},
+		{"proposer_slashing", common.MessageProposerSlashing, false, 0},
+		{"attester_slashing", common.MessageAttesterSlashing, false, 0},
+		{"bls_to_execution_change", common.MessageBlsToExecutionChange, false, 0},
+		{"blob_sidecar", common.MessageBlobSidecar, true, 6},        // MAX_BLOBS_PER_BLOCK
+		{"beacon_attestation", common.MessageAttestation, true, 64}, // ATTESTATION_SUBNET_COUNT
+		{"sync_committee", common.MessageSyncCommittee, true, 4},    // SYNC_COMMITTEE_SUBNET_COUNT
+		{"sync_committee_contribution_and_proof", common.MessageContributionAndProof, false, 0},
+	}
+
+	for _, t := range topics {
+		if t.hasSubnets {
+			// Register validator for each subnet
+			for i := 0; i < t.subnetCount; i++ {
+				topic := fmt.Sprintf("/eth2/%x/%s_%d/ssz_snappy", n.cfg.ForkDigest, t.base, i)
+				validator := n.validationRouter.CreateTopicValidator(topic, t.msgType)
+				if err := n.pubSub.gs.RegisterTopicValidator(topic, validator); err != nil {
+					return fmt.Errorf("register validator for %s: %w", topic, err)
+				}
+			}
+		} else {
+			// Register single validator
+			topic := fmt.Sprintf("/eth2/%x/%s/ssz_snappy", n.cfg.ForkDigest, t.base)
+			validator := n.validationRouter.CreateTopicValidator(topic, t.msgType)
+			if err := n.pubSub.gs.RegisterTopicValidator(topic, validator); err != nil {
+				return fmt.Errorf("register validator for %s: %w", topic, err)
+			}
+		}
+	}
+
+	slog.Info("Registered topic validators", "mode", n.cfg.ValidationMode)
+	return nil
 }
 
 // terminateSupervisorTreeOnErr can be used like
@@ -533,4 +654,188 @@ func (n *Node) startDataStream(ctx context.Context) (func(), error) {
 	}
 
 	return cleanupFn, nil
+}
+
+// setupValidation initializes the validation router
+func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
+	// Create logger adapter for validation
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+
+	// Create router config
+	routerConfig := &validation.RouterConfig{
+		Mode:   common.ModeDelegated, // Default to delegated
+		Logger: logger,
+	}
+
+	//beaconEndpoint := fmt.Sprintf("http://%s:%d", n.cfg.PrysmHost, n.cfg.PrysmPortHTTP)
+
+	if n.cfg.ValidationMode == "independent" {
+		routerConfig.Mode = common.ModeIndependent
+		routerConfig.IndependentConfig = &independent.IndependentConfig{
+			Logger:              logger,
+			BeaconNodeEndpoint:  n.cfg.PrysmHost,
+			BeaconNodePortHTTP:  n.cfg.PrysmPortHTTP,
+			BeaconNodeUseTLS:    n.cfg.PrysmUseTLS,
+			StateUpdateInterval: 30 * time.Second,
+		}
+		if n.cfg.ValidationConfig != nil {
+			routerConfig.IndependentConfig.AttestationThreshold = n.cfg.ValidationConfig.AttestationThreshold
+			routerConfig.IndependentConfig.AttestationPercent = n.cfg.ValidationConfig.AttestationPercent
+			routerConfig.IndependentConfig.ValidationTimeout = n.cfg.ValidationConfig.ValidationTimeout
+			routerConfig.IndependentConfig.SignatureCacheSize = n.cfg.ValidationConfig.CacheSize
+			routerConfig.IndependentConfig.CommitteeCacheSize = n.cfg.ValidationConfig.CacheSize
+			routerConfig.IndependentConfig.SeenMessageCacheSize = n.cfg.ValidationConfig.CacheSize
+			routerConfig.IndependentConfig.EnableBatchProcessing = n.cfg.ValidationConfig.SignatureBatchSize > 1
+			routerConfig.IndependentConfig.StateUpdateInterval = n.cfg.ValidationConfig.StateSyncInterval
+		}
+	} else {
+		// Create Prysm client for delegated mode
+		prysmClient := &delegated.PrysmClient{}
+		routerConfig.DelegatedConfig = &delegated.DelegatedConfig{
+			PrysmClient: prysmClient,
+			Logger:      logger,
+			CacheSize:   10000,
+		}
+	}
+
+	// Create validation router
+	router, err := validation.NewRouter(routerConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create validation router: %w", err)
+	}
+
+	// Start validation router
+	if err := router.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start validation router: %w", err)
+	}
+
+	n.validationRouter = router
+
+	// Create pubsub options with validators for each topic
+	var opts []pubsub.Option
+
+	// Register validators for all topics
+	topics := []struct {
+		base        string
+		msgType     common.MessageType
+		hasSubnets  bool
+		subnetCount int
+	}{
+		{"beacon_block", common.MessageBeaconBlock, false, 0},
+		{"beacon_aggregate_and_proof", common.MessageAggregateAndProof, false, 0},
+		{"voluntary_exit", common.MessageVoluntaryExit, false, 0},
+		{"proposer_slashing", common.MessageProposerSlashing, false, 0},
+		{"attester_slashing", common.MessageAttesterSlashing, false, 0},
+		{"bls_to_execution_change", common.MessageBlsToExecutionChange, false, 0},
+		{"blob_sidecar", common.MessageBlobSidecar, true, 6},        // MAX_BLOBS_PER_BLOCK
+		{"beacon_attestation", common.MessageAttestation, true, 64}, // ATTESTATION_SUBNET_COUNT
+		{"sync_committee", common.MessageSyncCommittee, true, 4},    // SYNC_COMMITTEE_SUBNET_COUNT
+		{"sync_committee_contribution_and_proof", common.MessageContributionAndProof, false, 0},
+	}
+
+	for _, t := range topics {
+		if t.hasSubnets {
+			// Register validator for each subnet
+			for i := 0; i < t.subnetCount; i++ {
+				topic := fmt.Sprintf("/eth2/%x/%s_%d/ssz_snappy", n.cfg.ForkDigest, t.base, i)
+				_ = router.CreateTopicValidator(topic, t.msgType)
+				// TODO: Register validator after pubsub creation
+			}
+		} else {
+			// Register single validator
+			topic := fmt.Sprintf("/eth2/%x/%s/ssz_snappy", n.cfg.ForkDigest, t.base)
+			_ = router.CreateTopicValidator(topic, t.msgType)
+			// TODO: Register validator after pubsub creation
+		}
+	}
+
+	return opts, nil
+}
+
+// extractTCPPortFromAddrs extracts the TCP port from the first TCP multiaddr in the list.
+// Returns 0 if no TCP port is found.
+func extractTCPPortFromAddrs(addrs []ma.Multiaddr) int {
+	for _, addr := range addrs {
+		addrStr := addr.String()
+		// Look for TCP addresses like /ip4/127.0.0.1/tcp/55554
+		if strings.Contains(addrStr, "/tcp/") {
+			parts := strings.Split(addrStr, "/tcp/")
+			if len(parts) >= 2 {
+				portStr := strings.Split(parts[1], "/")[0] // Get port, ignore any additional components
+				if port, err := strconv.Atoi(portStr); err == nil {
+					return port
+				}
+			}
+		}
+	}
+	return 0
+}
+
+type PeerAgentPrinter struct {
+	host     *host.Host
+	interval time.Duration
+}
+
+// String returns the service name
+func (p *PeerAgentPrinter) String() string {
+	return "peer-agent-printer"
+}
+
+// Serve runs the periodic peer agent printing
+func (p *PeerAgentPrinter) Serve(ctx context.Context) error {
+	ticker := time.NewTicker(p.interval)
+	defer ticker.Stop()
+
+	// Print initial summary
+	p.printPeerAgents()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			p.printPeerAgents()
+		}
+	}
+}
+
+// printPeerAgents prints a summary of connected peer agents
+func (p *PeerAgentPrinter) printPeerAgents() {
+	peers := p.host.Network().Peers()
+	if len(peers) == 0 {
+		slog.Info("No connected peers")
+		return
+	}
+
+	agentCounts := make(map[string]int)
+	for _, pid := range peers {
+		agent := p.host.AgentVersion(pid)
+		if agent == "" {
+			agent = "unknown"
+		}
+		agentCounts[agent]++
+	}
+
+	// Sort agents by count (descending) and then by name
+	type agentCount struct {
+		agent string
+		count int
+	}
+	var sorted []agentCount
+	for agent, count := range agentCounts {
+		sorted = append(sorted, agentCount{agent, count})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count != sorted[j].count {
+			return sorted[i].count > sorted[j].count
+		}
+		return sorted[i].agent < sorted[j].agent
+	})
+
+	// Print summary
+	slog.Info(fmt.Sprintf("Connected peers by agent (%d total):", len(peers)))
+	for _, ac := range sorted {
+		slog.Info(fmt.Sprintf("  %s: %d", ac.agent, ac.count))
+	}
 }
