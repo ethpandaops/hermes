@@ -69,8 +69,10 @@ func (d *DiscoveryConfig) enrAttnetsEntry() enr.Entry {
 }
 
 func (d *DiscoveryConfig) enrSyncnetsEntry() enr.Entry {
-	bitV := bitfield.Bitvector4{byte(0x00)}
-	return enr.WithEntry(d.NetworkConfig.SyncCommsSubnetKey, bitV.Bytes())
+	bitV := bitfield.NewBitvector4()
+	// Return the raw bitvector as a byte slice without the Bytes() method
+	// which masks the value. Teku expects the full byte.
+	return enr.WithEntry(d.NetworkConfig.SyncCommsSubnetKey, []byte(bitV))
 }
 
 func (d *DiscoveryConfig) BootstrapNodes() ([]*enode.Node, error) {

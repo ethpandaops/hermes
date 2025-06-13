@@ -13,9 +13,11 @@ import os
 import threading
 import queue
 import re
+import yaml
+import requests
 from datetime import datetime
 from collections import defaultdict
-from typing import Dict, Set
+from typing import Dict, Set, List, Optional
 
 class HermesMatrixTest:
     def __init__(self, duration: int, log_file: str, use_existing_network: bool = False):
@@ -189,6 +191,94 @@ class HermesMatrixTest:
         for service, client in self.discovered_participants.items():
             self.log(f"  - {service}: {client}")
         self.log(f"Expected client types: {sorted(self.expected_clients)}")
+        
+    def fetch_bootnode_enrs(self) -> List[str]:
+        """Fetch bootnode ENRs from the network config."""
+        try:
+            self.log("Fetching bootnode ENRs...")
+            response = requests.get(f"{self.apache_url}/network-configs/boot_enr.yaml", timeout=10)
+            response.raise_for_status()
+            
+            # Parse YAML
+            data = yaml.safe_load(response.text)
+            
+            # Extract ENRs - could be in different formats
+            enrs = []
+            if isinstance(data, list):
+                enrs = data
+            elif isinstance(data, dict):
+                # Check common keys
+                for key in ['enrs', 'ENRs', 'bootnodes', 'boot_enr']:
+                    if key in data:
+                        if isinstance(data[key], list):
+                            enrs = data[key]
+                        else:
+                            enrs = [data[key]]
+                        break
+            
+            # Filter valid ENRs
+            valid_enrs = [enr for enr in enrs if isinstance(enr, str) and enr.startswith('enr:')]
+            self.log(f"Found {len(valid_enrs)} bootnode ENRs")
+            return valid_enrs
+            
+        except Exception as e:
+            self.log(f"Failed to fetch bootnode ENRs: {e}", "ERROR")
+            return []
+            
+    def get_beacon_node_peer_ids(self) -> Dict[str, Optional[str]]:
+        """Get peer IDs from beacon nodes via their API endpoints."""
+        peer_ids = {}
+        
+        self.log("Fetching peer IDs from beacon nodes...")
+        
+        # Get all beacon node services
+        result = subprocess.run(
+            ["kurtosis", "enclave", "inspect", self.enclave_name],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode != 0:
+            self.log("Failed to inspect enclave for beacon nodes", "ERROR")
+            return peer_ids
+            
+        lines = result.stdout.split('\n')
+        current_service = None
+        
+        for line in lines:
+            # Check if this is a consensus layer service
+            if line.strip() and not line.startswith(' '):
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].startswith('cl-'):
+                    current_service = parts[1]
+                else:
+                    current_service = None
+            
+            # If we're in a cl- service section, look for HTTP port
+            if current_service and current_service in self.discovered_participants:
+                if "http:" in line and "metrics" not in line:
+                    parts = line.split('->')
+                    if len(parts) > 1:
+                        port_info = parts[1].strip()
+                        port = port_info.split(':')[-1].split()[0]
+                        
+                        # Try to get peer ID from beacon node API
+                        try:
+                            url = f"http://127.0.0.1:{port}/eth/v1/node/identity"
+                            response = requests.get(url, timeout=5)
+                            
+                            if response.status_code == 200:
+                                data = response.json()
+                                if 'data' in data and 'peer_id' in data['data']:
+                                    peer_id = data['data']['peer_id']
+                                    peer_ids[current_service] = peer_id
+                                    self.log(f"  {current_service}: {peer_id}")
+                            else:
+                                self.log(f"  {current_service}: API returned {response.status_code}", "WARN")
+                                
+                        except Exception as e:
+                            self.log(f"  {current_service}: Failed to get peer ID - {str(e)}", "WARN")
+                            
+        return peer_ids
         
     def process_json_line(self, line: str):
         """Process a line from stdout."""
@@ -573,6 +663,86 @@ class HermesMatrixTest:
                 self.log(f"No occurrences found in {client_type} logs")
                 
         self.log("\n=== End of participant log search ===\n")
+        
+    def search_hermes_logs_for_targets(self, bootnode_enrs: List[str], beacon_peer_ids: Dict[str, str]):
+        """Search Hermes logs for bootnode ENRs and beacon node peer IDs."""
+        self.log("")
+        self.log("=== Searching Hermes logs for bootnode ENRs and beacon peer IDs ===")
+        self.log("")
+        
+        # Read Hermes log files
+        all_logs = []
+        
+        # Read regular log file
+        try:
+            with open(self.log_file, 'r') as f:
+                all_logs.extend(f.readlines())
+        except Exception as e:
+            self.log(f"Failed to read log file: {e}", "ERROR")
+            
+        # Read JSON log file
+        try:
+            with open(self.json_file, 'r') as f:
+                all_logs.extend(f.readlines())
+        except Exception as e:
+            self.log(f"Failed to read JSON log file: {e}", "ERROR")
+            
+        if not all_logs:
+            self.log("No Hermes logs found to search", "WARN")
+            return
+            
+        # Search for bootnode ENRs
+        if bootnode_enrs:
+            self.log("--- Searching for bootnode ENRs ---")
+            for enr in bootnode_enrs:
+                enr_short = enr[:20] + "..." + enr[-20:] if len(enr) > 45 else enr
+                matches = []
+                
+                for i, line in enumerate(all_logs):
+                    if enr in line:
+                        matches.append((i, line.strip()))
+                        
+                if matches:
+                    self.log(f"\nFound {len(matches)} occurrences of bootnode ENR: {enr_short}")
+                    for line_num, line in matches[:3]:  # Show first 3 matches
+                        self.log(f"  Line {line_num}: {line[:200]}")
+                else:
+                    self.log(f"\nNo occurrences found for bootnode ENR: {enr_short}")
+                    
+        # Search for beacon node peer IDs
+        if beacon_peer_ids:
+            self.log("\n--- Searching for beacon node peer IDs ---")
+            for service, peer_id in beacon_peer_ids.items():
+                if not peer_id:
+                    continue
+                    
+                matches = []
+                for i, line in enumerate(all_logs):
+                    if peer_id in line:
+                        matches.append((i, line.strip()))
+                        
+                if matches:
+                    self.log(f"\nFound {len(matches)} occurrences of {service} peer ID: {peer_id}")
+                    for line_num, line in matches[:3]:  # Show first 3 matches
+                        self.log(f"  Line {line_num}: {line[:200]}")
+                        
+                        # Try to extract more context from JSON events
+                        if line.startswith('{'):
+                            try:
+                                event = json.loads(line)
+                                event_type = event.get('Type', event.get('Event', 'Unknown'))
+                                self.log(f"    Event Type: {event_type}")
+                                
+                                # Show relevant fields
+                                for field in ['Direction', 'Protocol', 'Error', 'State', 'Result']:
+                                    if field in event:
+                                        self.log(f"    {field}: {event[field]}")
+                            except:
+                                pass
+                else:
+                    self.log(f"\nNo occurrences found for {service} peer ID: {peer_id}")
+                    
+        self.log("\n=== End of Hermes log search ===\n")
     
     def analyze_results(self):
         """Analyze test results and determine pass/fail."""
@@ -658,8 +828,18 @@ class HermesMatrixTest:
             for reason in reasons:
                 self.log(f"  - {reason}")
                 
-            # On failure, grep participant logs for debug info
+            # On failure, gather debug info
+            self.log("\n=== Gathering detailed failure information ===\n")
+            
+            # Grep participant logs for Hermes peer ID
             self.grep_participant_logs()
+            
+            # Fetch bootnode ENRs and beacon peer IDs
+            bootnode_enrs = self.fetch_bootnode_enrs()
+            beacon_peer_ids = self.get_beacon_node_peer_ids()
+            
+            # Search Hermes logs for these targets
+            self.search_hermes_logs_for_targets(bootnode_enrs, beacon_peer_ids)
             
             return False
             
