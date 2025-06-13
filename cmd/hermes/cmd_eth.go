@@ -58,6 +58,7 @@ var ethConfig = &struct {
 	SubnetBlobSidecarStart     uint64
 	SubnetBlobSidecarEnd       uint64
 	SubscriptionTopics         []string
+	PrintPeerAgents            bool
 }{
 	PrivateKeyStr:               "", // unset means it'll be generated
 	Chain:                       params.MainnetName,
@@ -95,6 +96,7 @@ var ethConfig = &struct {
 	SubnetBlobSidecarCount:     0,
 	SubnetBlobSidecarStart:     0,
 	SubnetBlobSidecarEnd:       0,
+	PrintPeerAgents:            true, // default to true
 }
 
 var cmdEth = &cli.Command{
@@ -380,6 +382,13 @@ var cmdEthFlags = []cli.Flag{
 			return nil
 		},
 	},
+	&cli.BoolFlag{
+		Name:        "print-peer-agents",
+		EnvVars:     []string{"HERMES_ETH_PRINT_PEER_AGENTS"},
+		Usage:       "Enable periodic printing of connected peer agents (every 10s)",
+		Value:       ethConfig.PrintPeerAgents,
+		Destination: &ethConfig.PrintPeerAgents,
+	},
 }
 
 func cmdEthAction(c *cli.Context) error {
@@ -469,6 +478,8 @@ func cmdEthAction(c *cli.Context) error {
 		KinesisStream:               rootConfig.KinesisStream,
 		MaxPeers:                    ethConfig.MaxPeers,
 		DialConcurrency:             ethConfig.DialConcurrency,
+		AllowPrivateNetworks:        ethConfig.Chain == params.DevnetName, // Allow private networks for devnet
+		PrintPeerAgents:             ethConfig.PrintPeerAgents,
 		// PubSub config
 		PubSubSubscriptionRequestLimit: 200, // Prysm: beacon-chain/p2p/pubsub_filter.go#L22
 		PubSubQueueSize:                600, // Prysm: beacon-chain/p2p/config.go#L10

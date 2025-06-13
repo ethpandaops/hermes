@@ -1,0 +1,9 @@
+participants_matrix:
+  el:
+    - el_type: geth
+  cl:
+    - cl_type: prysm
+additional_services:
+  - apache
+
+global_log_level: "debug"

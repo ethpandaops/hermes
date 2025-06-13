@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	eth "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
@@ -149,6 +151,9 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("new libp2p host: %w", err)
 	}
 	slog.Info("Initialized new libp2p Host", tele.LogAttrPeerID(h.ID()), "maddrs", h.Addrs())
+	
+	// Print peer ID in a clear format for scripts to parse
+	slog.Info(fmt.Sprintf("HERMES_PEER_ID=%s", h.ID().String()))
 
 	// initialize ethereum node
 	privKey, err := cfg.ECDSAPrivateKey()
@@ -157,18 +162,29 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 	}
 
 	disc, err := NewDiscovery(privKey, &DiscoveryConfig{
-		GenesisConfig: cfg.GenesisConfig,
-		NetworkConfig: cfg.NetworkConfig,
-		Addr:          cfg.Devp2pHost,
-		UDPPort:       cfg.Devp2pPort,
-		TCPPort:       cfg.Libp2pPort,
-		Tracer:        cfg.Tracer,
-		Meter:         cfg.Meter,
+		GenesisConfig:        cfg.GenesisConfig,
+		NetworkConfig:        cfg.NetworkConfig,
+		Addr:                 cfg.Devp2pHost,
+		UDPPort:              cfg.Devp2pPort,
+		TCPPort:              cfg.Libp2pPort,
+		AllowPrivateNetworks: cfg.AllowPrivateNetworks,
+		Tracer:               cfg.Tracer,
+		Meter:                cfg.Meter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new discovery service: %w", err)
 	}
 	slog.Info("Initialized new devp2p Node", "enr", disc.node.Node().String())
+	
+	// Update discovery ENR with actual libp2p port if it was initially set to 0
+	if cfg.Libp2pPort == 0 {
+		// Extract the actual port from the libp2p host's listening addresses
+		actualPort := extractTCPPortFromAddrs(h.Addrs())
+		if actualPort > 0 {
+			disc.UpdateTCPPort(actualPort)
+			slog.Info("Updated discovery ENR", "enr", disc.node.Node().String())
+		}
+	}
 
 	// initialize the request-response protocol handlers
 	reqRespCfg := &ReqRespConfig{
@@ -493,6 +509,15 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 	n.sup.Add(aw)
 
+	// start peer agent printer if enabled
+	if n.cfg.PrintPeerAgents {
+		pap := &PeerAgentPrinter{
+			host:     n.host,
+			interval: 10 * time.Second,
+		}
+		n.sup.Add(pap)
+	}
+
 	// start all long-running services
 	return n.sup.Serve(ctx)
 }
@@ -533,4 +558,100 @@ func (n *Node) startDataStream(ctx context.Context) (func(), error) {
 	}
 
 	return cleanupFn, nil
+}
+
+// extractTCPPortFromAddrs extracts the TCP port from the first TCP multiaddr in the list.
+// Returns 0 if no TCP port is found.
+func extractTCPPortFromAddrs(addrs []ma.Multiaddr) int {
+	for _, addr := range addrs {
+		addrStr := addr.String()
+		// Look for TCP addresses like /ip4/127.0.0.1/tcp/55554
+		if strings.Contains(addrStr, "/tcp/") {
+			parts := strings.Split(addrStr, "/tcp/")
+			if len(parts) >= 2 {
+				portStr := strings.Split(parts[1], "/")[0] // Get port, ignore any additional components
+				if port, err := strconv.Atoi(portStr); err == nil {
+					return port
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// PeerAgentPrinter is a service that periodically prints connected peer agents
+type PeerAgentPrinter struct {
+	host     *host.Host
+	interval time.Duration
+}
+
+// String returns the service name
+func (p *PeerAgentPrinter) String() string {
+	return "peer-agent-printer"
+}
+
+// Serve runs the periodic peer agent printing
+func (p *PeerAgentPrinter) Serve(ctx context.Context) error {
+	ticker := time.NewTicker(p.interval)
+	defer ticker.Stop()
+
+	// Print initial summary
+	p.printPeerAgents()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			p.printPeerAgents()
+		}
+	}
+}
+
+// printPeerAgents prints a summary of connected peer agents
+func (p *PeerAgentPrinter) printPeerAgents() {
+	peers := p.host.Network().Peers()
+	if len(peers) == 0 {
+		slog.Info("Peer Agent Summary: No connected peers")
+		return
+	}
+
+	// Count agents
+	agentCounts := make(map[string]int)
+	for _, pid := range peers {
+		agent := p.host.AgentVersion(pid)
+		if agent == "" {
+			agent = "unknown"
+		}
+		
+		// Extract main client name (e.g., "Prysm/v1.2.3" -> "prysm")
+		parts := strings.Split(agent, "/")
+		if len(parts) > 0 {
+			clientName := strings.ToLower(parts[0])
+			switch clientName {
+			case "prysm", "lighthouse", "nimbus", "lodestar", "grandine", "teku", "erigon":
+				agentCounts[clientName]++
+			default:
+				agentCounts["other"]++
+			}
+		} else {
+			agentCounts["unknown"]++
+		}
+	}
+
+	// Build summary message
+	var agents []string
+	for agent := range agentCounts {
+		agents = append(agents, agent)
+	}
+	sort.Strings(agents)
+	
+	var summary []string
+	for _, agent := range agents {
+		summary = append(summary, fmt.Sprintf("%s: %d", agent, agentCounts[agent]))
+	}
+	
+	slog.Info("Peer Agent Summary", 
+		"total_peers", len(peers),
+		"agents", strings.Join(summary, ", "))
 }

@@ -15,13 +15,14 @@ import (
 )
 
 type DiscoveryConfig struct {
-	GenesisConfig *GenesisConfig
-	NetworkConfig *params.NetworkConfig
-	Addr          string
-	UDPPort       int
-	TCPPort       int
-	Tracer        trace.Tracer
-	Meter         metric.Meter
+	GenesisConfig        *GenesisConfig
+	NetworkConfig        *params.NetworkConfig
+	Addr                 string
+	UDPPort              int
+	TCPPort              int
+	AllowPrivateNetworks bool
+	Tracer               trace.Tracer
+	Meter                metric.Meter
 }
 
 // enrEth2Entry generates an Ethereum 2.0 entry for the Ethereum Node Record
@@ -69,7 +70,12 @@ func (d *DiscoveryConfig) enrAttnetsEntry() enr.Entry {
 }
 
 func (d *DiscoveryConfig) enrSyncnetsEntry() enr.Entry {
-	bitV := bitfield.Bitvector4{byte(0x00)}
+	bitV := bitfield.NewBitvector4()
+	// Set all bits to true for sync committee subnets
+	for i := uint64(0); i < bitV.Len(); i++ {
+		bitV.SetBitAt(i, true)
+	}
+	// Return the raw bitvector bytes - Teku expects the proper SSZ-encoded byte representation
 	return enr.WithEntry(d.NetworkConfig.SyncCommsSubnetKey, bitV.Bytes())
 }
 
