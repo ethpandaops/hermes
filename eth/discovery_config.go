@@ -18,11 +18,12 @@ type DiscoveryConfig struct {
 	GenesisConfig *GenesisConfig
 	NetworkConfig *params.NetworkConfig
 	SubnetConfigs map[string]*SubnetConfig
-	Addr          string
-	UDPPort       int
-	TCPPort       int
-	Tracer        trace.Tracer
-	Meter         metric.Meter
+	Addr                 string
+	UDPPort              int
+	TCPPort              int
+	AllowPrivateNetworks bool
+	Tracer               trace.Tracer
+	Meter                metric.Meter
 }
 
 // enrEth2Entry generates an Ethereum 2.0 entry for the Ethereum Node Record

@@ -260,6 +260,12 @@ type NodeConfig struct {
 	// the default list of topics will be used.
 	SubscriptionTopics []string
 
+	// AllowPrivateNetworks allows discovery and connection to peers with private IP addresses
+	AllowPrivateNetworks bool
+
+	// PrintPeerAgents enables periodic printing of connected peer agents
+	PrintPeerAgents bool
+
 	// Telemetry accessors
 	Tracer trace.Tracer
 	Meter  metric.Meter
