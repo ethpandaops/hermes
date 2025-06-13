@@ -110,6 +110,9 @@ type NodeConfig struct {
 	// the default list of topics will be used.
 	SubscriptionTopics []string
 
+	// AllowPrivateNetworks allows discovery and connection to peers with private IP addresses
+	AllowPrivateNetworks bool
+
 	// Telemetry accessors
 	Tracer trace.Tracer
 	Meter  metric.Meter

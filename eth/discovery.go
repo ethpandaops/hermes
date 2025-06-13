@@ -174,8 +174,8 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 		// yes, we do
 		node := iterator.Node()
 
-		// Skip peer if it is only privately reachable
-		if node.IP().IsPrivate() {
+		// Skip peer if it is only privately reachable (unless explicitly allowed)
+		if node.IP().IsPrivate() && !d.cfg.AllowPrivateNetworks {
 			continue
 		}
 		sszEncodedForkEntry := make([]byte, 16)

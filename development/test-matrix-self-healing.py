@@ -395,7 +395,7 @@ You may run 'go build ./cmd/hermes' to verify compilation, but nothing else.""",
             attempt_data["result"] = "build_failed"
             attempt_data["error"] = build_result.stderr[:500]
             self.save_attempt(attempt_data)
-            self.reset_changes()
+            # Don't reset - let changes accumulate
             return False
             
         # Run full test with changes
@@ -432,7 +432,7 @@ You may run 'go build ./cmd/hermes' to verify compilation, but nothing else.""",
                 missing = list(set(full_test.expected_clients) - set(connected))
                 attempt_data["error"] = f"Still missing: {missing}"
                 self.save_attempt(attempt_data)
-                self.reset_changes()
+                # Don't reset - let changes accumulate
                 return False
                 
         except Exception as e:
@@ -440,7 +440,7 @@ You may run 'go build ./cmd/hermes' to verify compilation, but nothing else.""",
             attempt_data["result"] = "execution_failed"
             attempt_data["error"] = str(e)
             self.save_attempt(attempt_data)
-            self.reset_changes()
+            # Don't reset - let changes accumulate
             return False
             
     async def run(self):

@@ -162,13 +162,14 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 	}
 
 	disc, err := NewDiscovery(privKey, &DiscoveryConfig{
-		GenesisConfig: cfg.GenesisConfig,
-		NetworkConfig: cfg.NetworkConfig,
-		Addr:          cfg.Devp2pHost,
-		UDPPort:       cfg.Devp2pPort,
-		TCPPort:       cfg.Libp2pPort,
-		Tracer:        cfg.Tracer,
-		Meter:         cfg.Meter,
+		GenesisConfig:        cfg.GenesisConfig,
+		NetworkConfig:        cfg.NetworkConfig,
+		Addr:                 cfg.Devp2pHost,
+		UDPPort:              cfg.Devp2pPort,
+		TCPPort:              cfg.Libp2pPort,
+		AllowPrivateNetworks: cfg.AllowPrivateNetworks,
+		Tracer:               cfg.Tracer,
+		Meter:                cfg.Meter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new discovery service: %w", err)

@@ -469,6 +469,7 @@ func cmdEthAction(c *cli.Context) error {
 		KinesisStream:               rootConfig.KinesisStream,
 		MaxPeers:                    ethConfig.MaxPeers,
 		DialConcurrency:             ethConfig.DialConcurrency,
+		AllowPrivateNetworks:        ethConfig.Chain == params.DevnetName, // Allow private networks for devnet
 		// PubSub config
 		PubSubSubscriptionRequestLimit: 200, // Prysm: beacon-chain/p2p/pubsub_filter.go#L22
 		PubSubQueueSize:                600, // Prysm: beacon-chain/p2p/config.go#L10
