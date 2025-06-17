@@ -83,6 +83,16 @@ func (m *BaseMetrics) GetAcceptedCount() uint64   { return m.AcceptedCount }
 func (m *BaseMetrics) GetRejectedCount() uint64   { return m.RejectedCount }
 func (m *BaseMetrics) GetErrorCount() uint64      { return m.ErrorCount }
 
+// RecordValidation records a validation result
+func (m *BaseMetrics) RecordValidation(messageType MessageType, result string) {
+	// Base implementation - can be overridden by embedders
+}
+
+// RecordValidationDuration records the duration of validation
+func (m *BaseMetrics) RecordValidationDuration(messageType MessageType, duration float64) {
+	// Base implementation - can be overridden by embedders
+}
+
 // MessageValidator validates specific message types
 type MessageValidator interface {
 	// Validate validates a specific message type

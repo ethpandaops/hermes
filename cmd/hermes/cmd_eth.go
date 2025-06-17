@@ -62,20 +62,17 @@ var ethConfig = &struct {
 	SubnetBlobSidecarStart     uint64
 	SubnetBlobSidecarEnd       uint64
 	SubscriptionTopics         []string
-<<<<<<< HEAD
 	PrintPeerAgents            bool
-=======
 	// Validation configuration
-	ValidationMode               string
-	ValidationAttestationThreshold    int
-	ValidationAttestationPercent      float64
-	ValidationTimeout                 time.Duration
-	ValidationSignatureBatchSize      int
-	ValidationCacheSize              int
-	ValidationMaxConcurrent          int
-	ValidationStateSyncInterval      time.Duration
-	ValidationCommitteeCacheEpochs   int
->>>>>>> origin/feat/smart-verification
+	ValidationMode                 string
+	ValidationAttestationThreshold int
+	ValidationAttestationPercent   float64
+	ValidationTimeout              time.Duration
+	ValidationSignatureBatchSize   int
+	ValidationCacheSize            int
+	ValidationMaxConcurrent        int
+	ValidationStateSyncInterval    time.Duration
+	ValidationCommitteeCacheEpochs int
 }{
 	PrivateKeyStr:               "", // unset means it'll be generated
 	Chain:                       params.MainnetName,
@@ -113,20 +110,17 @@ var ethConfig = &struct {
 	SubnetBlobSidecarCount:     0,
 	SubnetBlobSidecarStart:     0,
 	SubnetBlobSidecarEnd:       0,
-<<<<<<< HEAD
 	PrintPeerAgents:            true, // default to true
-=======
 	// Default validation configuration values.
-	ValidationMode:               "delegated",
-	ValidationAttestationThreshold:    10,
-	ValidationAttestationPercent:      0.0,
-	ValidationTimeout:                 5 * time.Second,
-	ValidationSignatureBatchSize:      64,
-	ValidationCacheSize:              10000,
-	ValidationMaxConcurrent:          100,
-	ValidationStateSyncInterval:      30 * time.Second,
-	ValidationCommitteeCacheEpochs:   4,
->>>>>>> origin/feat/smart-verification
+	ValidationMode:                 "delegated",
+	ValidationAttestationThreshold: 10,
+	ValidationAttestationPercent:   0.0,
+	ValidationTimeout:              5 * time.Second,
+	ValidationSignatureBatchSize:   64,
+	ValidationCacheSize:            10000,
+	ValidationMaxConcurrent:        100,
+	ValidationStateSyncInterval:    30 * time.Second,
+	ValidationCommitteeCacheEpochs: 4,
 }
 
 var cmdEth = &cli.Command{
@@ -596,10 +590,10 @@ func cmdEthAction(c *cli.Context) error {
 			AttestationPercent:      ethConfig.ValidationAttestationPercent,
 			ValidationTimeout:       ethConfig.ValidationTimeout,
 			SignatureBatchSize:      ethConfig.ValidationSignatureBatchSize,
-			CacheSize:              ethConfig.ValidationCacheSize,
+			CacheSize:               ethConfig.ValidationCacheSize,
 			MaxConcurrentValidation: ethConfig.ValidationMaxConcurrent,
-			StateSyncInterval:      ethConfig.ValidationStateSyncInterval,
-			CommitteeCacheEpochs:   ethConfig.ValidationCommitteeCacheEpochs,
+			StateSyncInterval:       ethConfig.ValidationStateSyncInterval,
+			CommitteeCacheEpochs:    ethConfig.ValidationCommitteeCacheEpochs,
 		},
 	}
 
