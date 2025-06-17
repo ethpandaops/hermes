@@ -79,24 +79,24 @@ type ContextStreamHandler func(context.Context, network.Stream) (map[string]any,
 // createAttnetsBitvector creates an attestation bitvector from subnet configuration
 func createAttnetsBitvector(subnetConfigs map[string]*SubnetConfig) bitfield.Bitvector64 {
 	attnets := bitfield.NewBitvector64()
-	
+
 	// Get attestation subnet config (may be nil)
 	attestationConfig := subnetConfigs[p2p.GossipAttestationMessage]
-	
+
 	// GetSubscribedSubnets handles nil config by returning all subnets
 	subnets := GetSubscribedSubnets(attestationConfig, 64)
 	for _, subnet := range subnets {
 		attnets.SetBitAt(uint64(subnet), true)
 	}
-	
+
 	if attestationConfig == nil {
 		slog.Debug("No attestation subnet config provided, advertising all 64 subnets in metadata")
 	} else {
-		slog.Debug("Attestation subnet metadata configured", 
+		slog.Debug("Attestation subnet metadata configured",
 			"type", attestationConfig.Type,
 			"subnet_count", len(subnets))
 	}
-	
+
 	return attnets
 }
 
@@ -107,7 +107,7 @@ func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 
 	// Create attestation bitvector from subnet configuration
 	attnets := createAttnetsBitvector(cfg.SubnetConfigs)
-	
+
 	md := &pb.MetaDataV1{
 		SeqNumber: 0,
 		Attnets:   attnets,
@@ -157,7 +157,7 @@ func (r *ReqResp) SetMetaData(seq uint64) {
 func (r *ReqResp) UpdateAttnets(attnets bitfield.Bitvector64) {
 	r.metaDataMu.Lock()
 	defer r.metaDataMu.Unlock()
-	
+
 	// Only update if actually changed
 	if !bytes.Equal(r.metaData.Attnets.Bytes(), attnets.Bytes()) {
 		r.metaData = &pb.MetaDataV1{
@@ -165,7 +165,7 @@ func (r *ReqResp) UpdateAttnets(attnets bitfield.Bitvector64) {
 			Attnets:   attnets,
 			Syncnets:  r.metaData.Syncnets,
 		}
-		
+
 		slog.Info("Updated attestation subnets in metadata",
 			"seq_number", r.metaData.SeqNumber,
 			"attnets", hex.EncodeToString(attnets.Bytes()))
@@ -176,7 +176,7 @@ func (r *ReqResp) UpdateAttnets(attnets bitfield.Bitvector64) {
 func (r *ReqResp) GetCurrentAttnets() bitfield.Bitvector64 {
 	r.metaDataMu.RLock()
 	defer r.metaDataMu.RUnlock()
-	
+
 	return r.metaData.Attnets
 }
 
@@ -449,7 +449,7 @@ func (r *ReqResp) statusHandler(ctx context.Context, upstream network.Stream) (m
 		resp, err = r.Status(dialCtx, r.delegate)
 		if err != nil {
 			// asking for the latest status failed. Use our own latest known status
-			slog.Warn("Downstream status request failed, using the latest known status")
+			slog.With("error", err).Warn("Downstream status request failed, using the latest known status")
 
 			statusCpy := r.cpyStatus()
 			if err := r.writeResponse(ctx, upstream, statusCpy); err != nil {

@@ -16,6 +16,7 @@ require (
 	github.com/dennis-tra/go-kinesis v0.0.0-20240326083914-7acf5f8dc24e
 	github.com/ethereum/go-ethereum v1.15.9
 	github.com/ferranbt/fastssz v0.1.4
+	github.com/golang/snappy v1.0.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/herumi/bls-eth-go-binary v1.36.1
@@ -104,7 +105,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/gopacket v1.1.19 // indirect

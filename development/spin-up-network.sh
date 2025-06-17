@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Simple script to spin up a Kurtosis network and show how to connect Hermes
 
-CONFIG="${1:-basic}"
+CONFIG="${1:-matrix}"
 ENCLAVE_NAME="hermes-devnet"
 
 # Validate config
