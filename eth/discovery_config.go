@@ -69,7 +69,12 @@ func (d *DiscoveryConfig) enrAttnetsEntry() enr.Entry {
 }
 
 func (d *DiscoveryConfig) enrSyncnetsEntry() enr.Entry {
-	bitV := bitfield.Bitvector4{byte(0x00)}
+	bitV := bitfield.NewBitvector4()
+	// Set all bits to true for sync committee subnets
+	for i := uint64(0); i < bitV.Len(); i++ {
+		bitV.SetBitAt(i, true)
+	}
+	// Return the raw bitvector bytes - Teku expects the proper SSZ-encoded byte representation
 	return enr.WithEntry(d.NetworkConfig.SyncCommsSubnetKey, bitV.Bytes())
 }
 

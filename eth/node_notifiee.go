@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	pb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/prysmaticlabs/go-bitfield"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
@@ -32,11 +34,9 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 		slog.Warn("Failed to store connection timestamp in peerstore", tele.LogAttrError(err))
 	}
 
-	if c.Stat().Direction == network.DirOutbound {
-		// handle the new connection by validating the peer. Needs to happen in a
-		// go routine because Connected is called synchronously.
-		go n.handleNewConnection(c.RemotePeer())
-	}
+	// Handle both inbound and outbound connections
+	// Consensus clients may initiate connections to Hermes, so we need to handshake with them too
+	go n.handleNewConnection(c.RemotePeer())
 }
 
 func (n *Node) Disconnected(net network.Network, c network.Conn) {
@@ -78,40 +78,75 @@ func (n *Node) ListenClose(net network.Network, maddr ma.Multiaddr) {}
 func (n *Node) handleNewConnection(pid peer.ID) {
 	// before we add the peer to our pool, we'll perform a handshake
 
-	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
+	// Use a longer timeout for handshakes to accommodate different client implementations
+	handshakeTimeout := n.cfg.DialTimeout
+	if handshakeTimeout < 15*time.Second {
+		handshakeTimeout = 15*time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
 	defer cancel()
 
-	valid := true
 	ps := n.host.Peerstore()
 
-	st, err := n.reqResp.Status(ctx, pid)
-	if err != nil {
-		valid = false
-	} else {
-		if err := n.reqResp.Ping(ctx, pid); err != nil {
-			valid = false
-		} else {
-			md, err := n.reqResp.MetaData(ctx, pid)
-			if err != nil {
-				valid = false
-			} else {
-				av := n.host.AgentVersion(pid)
-				if av == "" {
-					av = "n.a."
-				}
+	// Determine connection direction for logging
+	conns := n.host.Network().ConnsToPeer(pid)
+	direction := "unknown"
+	if len(conns) > 0 {
+		direction = conns[0].Stat().Direction.String()
+	}
+	
+	slog.Debug("Starting handshake", tele.LogAttrPeerID(pid), "direction", direction)
 
-				if err := ps.Put(pid, peerstoreKeyIsHandshaked, true); err != nil {
-					slog.Warn("Failed to store handshaked marker in peerstore", tele.LogAttrError(err))
-				}
-
-				slog.Info("Performed successful handshake", tele.LogAttrPeerID(pid), "seq", md.SeqNumber, "attnets", hex.EncodeToString(md.Attnets.Bytes()), "agent", av, "fork-digest", hex.EncodeToString(st.ForkDigest))
-			}
+	// Status is required - it validates the peer is on the same network
+	// Retry status request a few times as some clients may need time to initialize
+	var st *pb.Status
+	var err error
+	for retries := 0; retries < 3; retries++ {
+		st, err = n.reqResp.Status(ctx, pid)
+		if err == nil {
+			break
+		}
+		if retries < 2 {
+			slog.Debug("Status request failed, retrying", tele.LogAttrPeerID(pid), "attempt", retries+1, tele.LogAttrError(err))
+			time.Sleep(2 * time.Second)
 		}
 	}
-
-	if !valid {
+	
+	if err != nil {
+		slog.Warn("Status request failed after retries during handshake", tele.LogAttrPeerID(pid), "direction", direction, tele.LogAttrError(err))
 		// the handshake failed, we disconnect and remove it from our pool
 		ps.RemovePeer(pid)
 		_ = n.host.Network().ClosePeer(pid)
+		return
 	}
+
+	// Get agent version for logging
+	av := n.host.AgentVersion(pid)
+	if av == "" {
+		av = "n.a."
+	}
+
+	// Ping and MetaData are optional - some clients may have different implementations
+	// or timing requirements. We'll try them but won't disconnect if they fail.
+	pingErr := n.reqResp.Ping(ctx, pid)
+	if pingErr != nil {
+		slog.Debug("Ping failed during handshake (non-critical)", tele.LogAttrPeerID(pid), "agent", av, tele.LogAttrError(pingErr))
+	}
+
+	md, mdErr := n.reqResp.MetaData(ctx, pid)
+	if mdErr != nil {
+		slog.Debug("MetaData request failed during handshake (non-critical)", tele.LogAttrPeerID(pid), "agent", av, tele.LogAttrError(mdErr))
+		// Create a placeholder metadata for logging
+		md = &pb.MetaDataV1{
+			SeqNumber: 0,
+			Attnets:   bitfield.NewBitvector64(),
+		}
+	}
+
+	// Mark as handshaked since we got a valid status response
+	if err := ps.Put(pid, peerstoreKeyIsHandshaked, true); err != nil {
+		slog.Warn("Failed to store handshaked marker in peerstore", tele.LogAttrError(err))
+	}
+
+	slog.Info("Performed successful handshake", tele.LogAttrPeerID(pid), "direction", direction, "seq", md.SeqNumber, "attnets", hex.EncodeToString(md.Attnets.Bytes()), "agent", av, "fork-digest", hex.EncodeToString(st.ForkDigest), "ping_ok", pingErr == nil, "metadata_ok", mdErr == nil)
 }

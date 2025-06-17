@@ -110,6 +110,9 @@ type NodeConfig struct {
 	// the default list of topics will be used.
 	SubscriptionTopics []string
 
+	// PrintPeerAgents enables periodic printing of connected peer agents
+	PrintPeerAgents bool
+
 	// Telemetry accessors
 	Tracer trace.Tracer
 	Meter  metric.Meter
