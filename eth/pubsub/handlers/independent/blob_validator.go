@@ -1,15 +1,16 @@
 package independent
 
 import (
-	"github.com/probe-lab/hermes/eth/pubsub/common"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
 
+	"github.com/attestantio/go-eth2-client/spec/deneb"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
-	"github.com/attestantio/go-eth2-client/spec/deneb"
+
+	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
 // BlobSidecarValidator validates blob sidecar messages with KZG proofs
@@ -37,7 +38,7 @@ func (v *BlobSidecarValidator) Handle(ctx context.Context, data []byte, topic st
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// Decode the blob sidecar using consensus-spec types
 	sidecar := &deneb.BlobSidecar{}
 	if err := sidecar.UnmarshalSSZ(decompressed); err != nil {
@@ -73,32 +74,32 @@ func (v *BlobSidecarValidator) verifyKZGProof(sidecar *deneb.BlobSidecar) error 
 	if err != nil {
 		return errors.Wrap(err, "failed to verify KZG proof")
 	}
-	
+
 	return nil
 }
 
 func (v *BlobSidecarValidator) verifyInclusionProof(sidecar *deneb.BlobSidecar) error {
 	// Verify the inclusion proof that proves the KZG commitment is in the beacon block
-	
+
 	// First, hash the KZG commitment
 	commitmentHash := sha256.Sum256(sidecar.KZGCommitment[:])
-	
+
 	// Build the Merkle branch
 	branch := make([][]byte, len(sidecar.KZGCommitmentInclusionProof))
 	for i, proof := range sidecar.KZGCommitmentInclusionProof {
 		branch[i] = proof[:]
 	}
-	
+
 	// The leaf is at index = blob_index + NUMBER_OF_COLUMNS
 	// For mainnet, NUMBER_OF_COLUMNS = 0, so leaf_index = blob_index
 	leafIndex := uint64(sidecar.Index)
-	
+
 	// Verify the Merkle proof
 	// This proves that the commitment at blob_index is included in the beacon block body
 	if !verifyMerkleBranch(commitmentHash[:], branch, 17, leafIndex, sidecar.SignedBlockHeader.Message.BodyRoot[:]) { // KZG commitments depth is 17
 		return errors.New("invalid inclusion proof")
 	}
-	
+
 	return nil
 }
 
@@ -108,26 +109,26 @@ func (v *BlobSidecarValidator) verifyProposerSignature(sidecar *deneb.BlobSideca
 	if state == nil {
 		return errors.New("current state not available")
 	}
-	
+
 	// Get the proposer index
 	proposerIndex := sidecar.SignedBlockHeader.Message.ProposerIndex
-	
+
 	// Get the proposer's public key
 	validatorInfo, exists := state.Validators[common.ValidatorIndex(proposerIndex)]
 	if !exists {
 		return fmt.Errorf("proposer %d not found in validator set", proposerIndex)
 	}
-	
+
 	// Serialize the block header for signing
 	headerBytes, err := sidecar.SignedBlockHeader.Message.MarshalSSZ()
 	if err != nil {
 		return errors.Wrap(err, "failed to serialize block header")
 	}
-	
+
 	// Verify the signature
 	return v.validator.signatureVerifier.VerifySignature(
-		validatorInfo.PublicKey, 
-		headerBytes, 
+		validatorInfo.PublicKey,
+		headerBytes,
 		sidecar.SignedBlockHeader.Signature[:],
 		common.DomainBeaconProposer,
 		state.Epoch,
@@ -154,4 +155,3 @@ func hashTreeRoot(a, b []byte) []byte {
 	hasher.Write(b)
 	return hasher.Sum(nil)
 }
-

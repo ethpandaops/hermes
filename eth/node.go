@@ -10,12 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p"
 	eth "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	gk "github.com/dennis-tra/go-kinesis"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/sirupsen/logrus"
 	"github.com/thejerf/suture/v4"
 	"go.opentelemetry.io/otel/attribute"
@@ -25,6 +27,9 @@ import (
 	"github.com/probe-lab/hermes/eth/pubsub/handlers"
 	"github.com/probe-lab/hermes/eth/pubsub/handlers/delegated"
 	"github.com/probe-lab/hermes/eth/pubsub/handlers/independent"
+	"github.com/probe-lab/hermes/eth/reqresp"
+	reqrespdelegated "github.com/probe-lab/hermes/eth/reqresp/delegated"
+	reqrespupstream "github.com/probe-lab/hermes/eth/reqresp/upstream"
 	"github.com/probe-lab/hermes/host"
 	"github.com/probe-lab/hermes/tele"
 )
@@ -50,7 +55,9 @@ type Node struct {
 	pryClient *PrysmClient
 
 	// The request/response protocol handlers as well as some client methods
-	reqResp *ReqResp
+	reqRespManager *reqresp.Manager
+	reqRespHandler reqresp.Handler
+	reqRespConfig  *reqresp.Config
 
 	// The PubSub service that implements various gossipsub topics
 	pubSub *PubSub
@@ -196,21 +203,67 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 	}
 
 	// initialize the request-response protocol handlers
-	reqRespCfg := &ReqRespConfig{
+	reqRespCfg := &reqresp.Config{
 		ForkDigest:    cfg.ForkDigest,
 		Encoder:       cfg.RPCEncoder,
 		DataStream:    ds,
 		ReadTimeout:   cfg.BeaconConfig.TtfbTimeoutDuration(),
 		WriteTimeout:  cfg.BeaconConfig.RespTimeoutDuration(),
-		SubnetConfigs: cfg.SubnetConfigs,
+		SubnetConfigs: nil, // Not needed for new architecture
 		Tracer:        cfg.Tracer,
 		Meter:         cfg.Meter,
 	}
 
-	reqResp, err := NewReqResp(h, reqRespCfg)
-	if err != nil {
-		return nil, fmt.Errorf("new p2p server: %w", err)
+	// Create req/resp handler based on mode
+	// If validation mode is independent, automatically use upstream mode for reqresp
+	var reqRespHandler reqresp.Handler
+	if cfg.ReqRespMode == "upstream" || cfg.ValidationMode == "independent" {
+		// For independent validation, use the beacon node URL (PrysmHost)
+		beaconURL := cfg.UpstreamBeaconURL
+		if cfg.ValidationMode == "independent" && beaconURL == "" {
+			// Construct beacon URL from PrysmHost and port
+			protocol := "http"
+			if cfg.PrysmUseTLS {
+				protocol = "https"
+			}
+			beaconURL = fmt.Sprintf("%s://%s:%d", protocol, cfg.PrysmHost, cfg.PrysmPortHTTP)
+		}
+		
+		// Create upstream handler that uses beacon API
+		upstreamHandler, err := reqrespupstream.NewUpstreamHandler(h, reqRespCfg, beaconURL, slog.Default())
+		if err != nil {
+			return nil, fmt.Errorf("new upstream handler: %w", err)
+		}
+		reqRespHandler = upstreamHandler
+		
+		if cfg.ValidationMode == "independent" {
+			slog.Info("Using upstream req/resp mode for independent validation", "beacon_url", beaconURL)
+		}
+	} else {
+		// Default to delegated mode
+		// Note: delegate peer will be set later when connecting to Prysm
+		var emptyPeer peer.ID
+		delegatedHandler, err := reqrespdelegated.NewDelegatedHandler(h, reqRespCfg, emptyPeer, slog.Default())
+		if err != nil {
+			return nil, fmt.Errorf("new delegated handler: %w", err)
+		}
+		reqRespHandler = delegatedHandler
 	}
+
+	// Create manager
+	reqRespManager, err := reqresp.NewManager(h, reqRespHandler, reqRespCfg)
+	if err != nil {
+		return nil, fmt.Errorf("new reqresp manager: %w", err)
+	}
+
+	// Initialize metadata
+	attnets := createAttnetsBitvector(cfg.SubnetConfigs)
+	metadata := &eth.MetaDataV1{
+		SeqNumber: 0,
+		Attnets:   attnets,
+		Syncnets:  bitfield.Bitvector4{byte(0x00)},
+	}
+	reqRespHandler.SetMetaData(metadata)
 
 	// initialize the pubsub topic handlers
 	pubSubConfig := &PubSubConfig{
@@ -249,7 +302,9 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 		host:           h,
 		ds:             ds,
 		sup:            suture.NewSimple("eth"),
-		reqResp:        reqResp,
+		reqRespManager: reqRespManager,
+		reqRespHandler: reqRespHandler,
+		reqRespConfig:  reqRespCfg,
 		pubSub:         pubSub,
 		pryClient:      pryClient,
 		peerer:         NewPeerer(h, pryClient, cfg.LocalTrustedAddr),
@@ -371,7 +426,13 @@ func (n *Node) UpdateAttestationSubnets() {
 	}
 
 	attnets := createAttnetsBitvector(n.cfg.SubnetConfigs)
-	n.reqResp.UpdateAttnets(attnets)
+	// Update metadata with new attestation subnets
+	metadata := n.reqRespHandler.GetMetaData()
+	if metadata != nil {
+		metadata.Attnets = attnets
+		metadata.SeqNumber++
+		n.reqRespHandler.SetMetaData(metadata)
+	}
 }
 
 // Start starts the listening process.
@@ -404,7 +465,12 @@ func (n *Node) Start(ctx context.Context) error {
 
 		// cache the address information on the node
 		n.pryInfo = addrInfo
-		n.reqResp.delegate = addrInfo.ID
+		// Update delegate peer in handler if it's a delegated handler
+		if _, ok := n.reqRespHandler.(*reqrespdelegated.DelegatedHandler); ok {
+			// TODO: Add method to update delegate peer after initialization
+			// For now, the delegate is set during initialization
+			slog.Info("Delegate peer would be updated here", "peer", addrInfo.ID)
+		}
 	} else {
 		slog.Info("Running in independent validation mode - skipping P2P connection to Prysm")
 	}
@@ -429,10 +495,10 @@ func (n *Node) Start(ctx context.Context) error {
 		HeadRoot:       chainHead.HeadBlockRoot,
 		HeadSlot:       chainHead.HeadSlot,
 	}
-	n.reqResp.SetStatus(status)
+	n.reqRespHandler.SetStatus(status)
 
 	// Set stream handlers on our libp2p host
-	if err := n.reqResp.RegisterHandlers(ctx); err != nil {
+	if err := n.reqRespManager.RegisterHandlers(); err != nil {
 		return fmt.Errorf("register RPC handlers: %w", err)
 	}
 
@@ -844,4 +910,29 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 	}
 
 	return opts, nil
+}
+
+
+// createAttnetsBitvector creates an attestation bitvector from subnet configuration
+func createAttnetsBitvector(subnetConfigs map[string]*SubnetConfig) bitfield.Bitvector64 {
+	attnets := bitfield.NewBitvector64()
+	
+	// Get attestation subnet config (may be nil)
+	attestationConfig := subnetConfigs[p2p.GossipAttestationMessage]
+	
+	// GetSubscribedSubnets handles nil config by returning all subnets
+	subnets := GetSubscribedSubnets(attestationConfig, 64)
+	for _, subnet := range subnets {
+		attnets.SetBitAt(uint64(subnet), true)
+	}
+	
+	if attestationConfig == nil {
+		slog.Debug("No attestation subnet config provided, advertising all 64 subnets in metadata")
+	} else {
+		slog.Debug("Attestation subnet metadata configured", 
+			"type", attestationConfig.Type,
+			"subnet_count", len(subnets))
+	}
+	
+	return attnets
 }

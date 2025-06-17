@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
+	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
-	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
-	
+
 	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
@@ -28,7 +28,7 @@ func (v *VoluntaryExitValidator) Handle(ctx context.Context, data []byte, topic 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// Decode the signed voluntary exit
 	exit := &ethpb.SignedVoluntaryExit{}
 	if err := exit.UnmarshalSSZ(decompressed); err != nil {
@@ -40,7 +40,7 @@ func (v *VoluntaryExitValidator) Handle(ctx context.Context, data []byte, topic 
 	if state == nil {
 		return nil, errors.New("no beacon state available")
 	}
-	
+
 	validatorIdx := exit.Exit.ValidatorIndex
 	validator, exists := state.Validators[common.ValidatorIndex(validatorIdx)]
 	if !exists {
@@ -66,7 +66,7 @@ func (v *VoluntaryExitValidator) Handle(ctx context.Context, data []byte, topic 
 	if currentState == nil {
 		return nil, errors.New("no beacon state available")
 	}
-	
+
 	domain, err := common.ComputeDomain(
 		common.DomainVoluntaryExit,
 		currentState.Fork,
@@ -75,12 +75,12 @@ func (v *VoluntaryExitValidator) Handle(ctx context.Context, data []byte, topic 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to compute domain")
 	}
-	
+
 	signingRoot, err := common.ComputeSigningRoot(exit.Exit, domain)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to compute signing root")
 	}
-	
+
 	err = v.validator.signatureVerifier.VerifySignature(
 		validator.PublicKey,
 		signingRoot[:],
@@ -109,7 +109,7 @@ func (v *ProposerSlashingValidator) Handle(ctx context.Context, data []byte, top
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// Decode the proposer slashing
 	slashing := &ethpb.ProposerSlashing{}
 	if err := slashing.UnmarshalSSZ(decompressed); err != nil {
@@ -150,7 +150,7 @@ func (v *ProposerSlashingValidator) Handle(ctx context.Context, data []byte, top
 	if currentState == nil {
 		return nil, errors.New("no beacon state available")
 	}
-	
+
 	// Compute domain
 	epoch := common.SlotToEpoch(slashing.Header_1.Header.Slot)
 	domain, err := common.ComputeDomain(
@@ -167,7 +167,7 @@ func (v *ProposerSlashingValidator) Handle(ctx context.Context, data []byte, top
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to compute signing root for header 1")
 	}
-	
+
 	if err := v.validator.signatureVerifier.VerifySignature(
 		proposer.PublicKey,
 		signingRoot1[:],
@@ -183,7 +183,7 @@ func (v *ProposerSlashingValidator) Handle(ctx context.Context, data []byte, top
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to compute signing root for header 2")
 	}
-	
+
 	if err := v.validator.signatureVerifier.VerifySignature(
 		proposer.PublicKey,
 		signingRoot2[:],
@@ -212,7 +212,7 @@ func (v *AttesterSlashingValidator) Handle(ctx context.Context, data []byte, top
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// Decode the attester slashing
 	slashing := &ethpb.AttesterSlashing{}
 	if err := slashing.UnmarshalSSZ(decompressed); err != nil {
@@ -285,7 +285,7 @@ func (v *AttesterSlashingValidator) verifyIndexedAttestation(
 	if currentState == nil {
 		return errors.New("no beacon state available")
 	}
-	
+
 	// Compute domain
 	domainBytes, err := common.ComputeDomain(
 		domain,
@@ -295,7 +295,7 @@ func (v *AttesterSlashingValidator) verifyIndexedAttestation(
 	if err != nil {
 		return errors.Wrap(err, "failed to compute domain")
 	}
-	
+
 	// Compute signing root
 	signingRoot, err := common.ComputeSigningRoot(att.Data, domainBytes)
 	if err != nil {
@@ -313,7 +313,6 @@ func (v *AttesterSlashingValidator) verifyIndexedAttestation(
 }
 
 // Helper functions
-
 
 func isSlashableAttestationPair(att1, att2 *ethpb.IndexedAttestation) bool {
 	// Double vote: same target epoch
@@ -374,7 +373,7 @@ func (v *BLSToExecutionChangeValidator) Handle(ctx context.Context, data []byte,
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// Decode the signed BLS to execution change
 	change := &ethpb.SignedBLSToExecutionChange{}
 	if err := change.UnmarshalSSZ(decompressed); err != nil {

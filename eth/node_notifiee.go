@@ -102,7 +102,7 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 	var st *pb.Status
 	var err error
 	for retries := 0; retries < 3; retries++ {
-		st, err = n.reqResp.Status(ctx, pid)
+		st, err = n.Status(ctx, pid)
 		if err == nil {
 			break
 		}
@@ -128,12 +128,12 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 
 	// Ping and MetaData are optional - some clients may have different implementations
 	// or timing requirements. We'll try them but won't disconnect if they fail.
-	pingErr := n.reqResp.Ping(ctx, pid)
+	pingErr := n.Ping(ctx, pid)
 	if pingErr != nil {
 		slog.Debug("Ping failed during handshake (non-critical)", tele.LogAttrPeerID(pid), "agent", av, tele.LogAttrError(pingErr))
 	}
 
-	md, mdErr := n.reqResp.MetaData(ctx, pid)
+	md, mdErr := n.MetaData(ctx, pid)
 	if mdErr != nil {
 		slog.Debug("MetaData request failed during handshake (non-critical)", tele.LogAttrPeerID(pid), "agent", av, tele.LogAttrError(mdErr))
 		// Create a placeholder metadata for logging

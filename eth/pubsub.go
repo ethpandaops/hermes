@@ -44,10 +44,10 @@ func (p PubSubConfig) Validate() error {
 }
 
 type PubSub struct {
-	host    *host.Host
-	cfg     *PubSubConfig
-	gs      *pubsub.PubSub
-	dsr     host.DataStreamRenderer
+	host *host.Host
+	cfg  *PubSubConfig
+	gs   *pubsub.PubSub
+	dsr  host.DataStreamRenderer
 }
 
 func NewPubSub(h *host.Host, cfg *PubSubConfig) (*PubSub, error) {
@@ -91,10 +91,6 @@ func (p *PubSub) Serve(ctx context.Context) error {
 
 	return supervisor.Serve(ctx)
 }
-
-// mapPubSubTopicWithHandlers is no longer needed - all handling is done in validators
-
-// All message handling is now done in validators to avoid double decompression
 
 var _ pubsub.SubscriptionFilter = (*Node)(nil)
 

@@ -31,11 +31,11 @@ func (v *KZGVerifier) VerifyBlobKZGProof(blob []byte, commitment []byte, proof [
 	if len(blob) != 131072 { // 128KB
 		return fmt.Errorf("invalid blob size: %d", len(blob))
 	}
-	
+
 	if len(commitment) != 48 {
 		return fmt.Errorf("invalid commitment size: %d", len(commitment))
 	}
-	
+
 	if len(proof) != 48 {
 		return fmt.Errorf("invalid proof size: %d", len(proof))
 	}
@@ -46,7 +46,7 @@ func (v *KZGVerifier) VerifyBlobKZGProof(blob []byte, commitment []byte, proof [
 		commitmentArray kzg4844.Commitment
 		proofArray      kzg4844.Proof
 	)
-	
+
 	copy(blobArray[:], blob)
 	copy(commitmentArray[:], commitment)
 	copy(proofArray[:], proof)
@@ -56,7 +56,7 @@ func (v *KZGVerifier) VerifyBlobKZGProof(blob []byte, commitment []byte, proof [
 	if err != nil {
 		return errors.Wrap(err, "failed to verify blob KZG proof")
 	}
-	
+
 	return nil
 }
 
@@ -65,7 +65,7 @@ func (v *KZGVerifier) VerifyBlobKZGCommitment(blob []byte, commitment []byte) er
 	if len(blob) != 131072 { // 128KB
 		return fmt.Errorf("invalid blob size: %d", len(blob))
 	}
-	
+
 	if len(commitment) != 48 {
 		return fmt.Errorf("invalid commitment size: %d", len(commitment))
 	}
@@ -83,11 +83,11 @@ func (v *KZGVerifier) VerifyBlobKZGCommitment(blob []byte, commitment []byte) er
 	// Compare commitments
 	var expectedCommitment kzg4844.Commitment
 	copy(expectedCommitment[:], commitment)
-	
+
 	if computedCommitment != expectedCommitment {
 		return errors.New("commitment does not match blob")
 	}
-	
+
 	return nil
 }
 
@@ -101,10 +101,10 @@ func (v *KZGVerifier) ComputeVersionedHash(commitment []byte) ([]byte, error) {
 	// Version byte for blob commitments is 0x01
 	var commitmentArray kzg4844.Commitment
 	copy(commitmentArray[:], commitment)
-	
+
 	// go-ethereum's implementation includes the version byte
 	hash := kzg4844.CalcBlobHashV1(sha256.New(), &commitmentArray)
-	
+
 	return hash[:], nil
 }
 
@@ -114,15 +114,15 @@ func (v *KZGVerifier) VerifyBlobSidecarKZG(blob []byte, commitment []byte, proof
 	if err := v.VerifyBlobKZGProof(blob, commitment, proof); err != nil {
 		return errors.Wrap(err, "KZG proof verification failed")
 	}
-	
+
 	// Verify the commitment matches the blob
 	if err := v.VerifyBlobKZGCommitment(blob, commitment); err != nil {
 		return errors.Wrap(err, "commitment verification failed")
 	}
-	
+
 	// Note: Inclusion proof verification would require the beacon block body root
 	// This is handled separately in the blob sidecar validator
-	
+
 	v.logger.Debug("KZG verification passed for blob sidecar")
 	return nil
 }

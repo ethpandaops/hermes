@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/probe-lab/hermes/eth/pubsub/common"
-
 	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
+
+	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
 // StandardAttestationValidator validates individual attestation messages

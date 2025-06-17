@@ -127,7 +127,11 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s:%d: %w", bindIP, d.cfg.UDPPort, err)
 	}
-	defer logDeferErr(conn.Close, "failed to close discovery UDP connection")
+	defer func() {
+		if err := conn.Close(); err != nil {
+			slog.Warn("failed to close discovery UDP connection", tele.LogAttrError(err))
+		}
+	}()
 
 	enodes, err := d.cfg.BootstrapNodes()
 	if err != nil {

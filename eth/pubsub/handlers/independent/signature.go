@@ -1,16 +1,17 @@
 package independent
 
 import (
-	"github.com/probe-lab/hermes/eth/pubsub/common"
 	"encoding/binary"
 	"fmt"
 	"sync"
 
-	bls "github.com/herumi/bls-eth-go-binary/bls"
-	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/pkg/errors"
 	"github.com/OffchainLabs/prysm/v6/crypto/hash"
+	lru "github.com/hashicorp/golang-lru/v2"
+	bls "github.com/herumi/bls-eth-go-binary/bls"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+
+	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
 func init() {
@@ -25,12 +26,12 @@ func init() {
 
 // SignatureVerifier handles BLS signature verification with caching
 type SignatureVerifier struct {
-	logger       *logrus.Logger
-	pubKeyCache  *lru.Cache[common.ValidatorIndex, *bls.PublicKey]
-	domainCache  *lru.Cache[string, [32]byte]
-	genesisRoot  [32]byte
-	currentFork  [4]byte
-	mu           sync.RWMutex
+	logger      *logrus.Logger
+	pubKeyCache *lru.Cache[common.ValidatorIndex, *bls.PublicKey]
+	domainCache *lru.Cache[string, [32]byte]
+	genesisRoot [32]byte
+	currentFork [4]byte
+	mu          sync.RWMutex
 }
 
 // NewSignatureVerifier creates a new signature verifier
@@ -68,7 +69,7 @@ func (sv *SignatureVerifier) AddPublicKey(index common.ValidatorIndex, pubKeyByt
 	if err := pubKey.Deserialize(pubKeyBytes); err != nil {
 		return errors.Wrap(err, "failed to deserialize public key")
 	}
-	
+
 	sv.pubKeyCache.Add(index, pubKey)
 	return nil
 }
@@ -180,7 +181,7 @@ func (sv *SignatureVerifier) VerifyAggregateSignature(
 		if err := pubKey.Deserialize(pubKeyBytes); err != nil {
 			return errors.Wrapf(err, "invalid public key at index %d", i)
 		}
-		
+
 		if i == 0 {
 			*aggregatedPubKey = *pubKey
 		} else {
@@ -204,19 +205,19 @@ func (sv *SignatureVerifier) computeDomain(domainType common.DomainType, epoch c
 
 	// Cache key combines domain type, fork version, and genesis root
 	cacheKey := fmt.Sprintf("%d:%x:%x", domainType, forkVersion, sv.genesisRoot)
-	
+
 	if domain, ok := sv.domainCache.Get(cacheKey); ok {
 		return domain, nil
 	}
 
 	// Compute fork data root
 	forkDataRoot := computeForkDataRoot(forkVersion, sv.genesisRoot)
-	
+
 	// Compute domain
 	var domain [32]byte
 	copy(domain[0:4], uint32ToBytes(uint32(domainType)))
 	copy(domain[4:], forkDataRoot[0:28])
-	
+
 	sv.domainCache.Add(cacheKey, domain)
 	return domain, nil
 }

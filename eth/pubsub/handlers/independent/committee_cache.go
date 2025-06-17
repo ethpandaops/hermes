@@ -1,24 +1,25 @@
 package independent
 
 import (
-	"github.com/probe-lab/hermes/eth/pubsub/common"
 	"fmt"
 	"sync"
 
+	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/pkg/errors"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
 	"github.com/sirupsen/logrus"
+
+	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
 // CommitteeCache provides fast committee lookups with pre-computation
 type CommitteeCache struct {
-	logger              *logrus.Logger
-	slotCommitteeCache  *lru.Cache[string, *common.CommitteeAssignment]
-	subnetCache         *lru.Cache[uint64, *common.CommitteeAssignment]
-	syncCommitteeCache  *lru.Cache[common.Epoch, []common.ValidatorIndex]
-	validatorCache      *lru.Cache[string, common.ValidatorIndex]
-	mu                  sync.RWMutex
+	logger             *logrus.Logger
+	slotCommitteeCache *lru.Cache[string, *common.CommitteeAssignment]
+	subnetCache        *lru.Cache[uint64, *common.CommitteeAssignment]
+	syncCommitteeCache *lru.Cache[common.Epoch, []common.ValidatorIndex]
+	validatorCache     *lru.Cache[string, common.ValidatorIndex]
+	mu                 sync.RWMutex
 }
 
 // NewCommitteeCache creates a new committee cache
@@ -184,4 +185,3 @@ func (cc *CommitteeCache) Clear() {
 	cc.syncCommitteeCache.Purge()
 	cc.validatorCache.Purge()
 }
-

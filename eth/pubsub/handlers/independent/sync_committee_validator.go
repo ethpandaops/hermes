@@ -5,10 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/golang/snappy"
-	"github.com/pkg/errors"
 	"github.com/attestantio/go-eth2-client/spec/altair"
 	"github.com/attestantio/go-eth2-client/spec/phase0"
+	"github.com/golang/snappy"
+	"github.com/pkg/errors"
 	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
@@ -29,7 +29,7 @@ func (v *SyncCommitteeMessageValidator) Handle(ctx context.Context, data []byte,
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// Decode using consensus spec type
 	msg := &altair.SyncCommitteeMessage{}
 	if err := msg.UnmarshalSSZ(decompressed); err != nil {
@@ -53,7 +53,7 @@ func (v *SyncCommitteeMessageValidator) Handle(ctx context.Context, data []byte,
 
 	// Determine which sync committee to use
 	currentPeriod := uint64(state.Slot) / (32 * 256)
-	
+
 	var syncCommittee *SyncCommitteeInfo
 	if period == currentPeriod {
 		syncCommittee = state.CurrentSyncCommittee
@@ -85,8 +85,8 @@ func (v *SyncCommitteeMessageValidator) Handle(ctx context.Context, data []byte,
 
 	// Verify signature
 	err = v.validator.signatureVerifier.VerifySignature(
-		validatorInfo.PublicKey, 
-		containerBytes, 
+		validatorInfo.PublicKey,
+		containerBytes,
 		msg.Signature[:],
 		common.DomainSyncCommittee,
 		state.Epoch,
@@ -114,7 +114,7 @@ func (v *SyncCommitteeContributionValidator) Handle(ctx context.Context, data []
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// Decode using consensus spec type
 	contributionAndProof := &altair.SignedContributionAndProof{}
 	if err := contributionAndProof.UnmarshalSSZ(decompressed); err != nil {
@@ -154,8 +154,8 @@ func (v *SyncCommitteeContributionValidator) Handle(ctx context.Context, data []
 	binary.LittleEndian.PutUint64(selectionBytes[8:16], contribution.SubcommitteeIndex)
 
 	if err := v.validator.signatureVerifier.VerifySignature(
-		validatorInfo.PublicKey, 
-		selectionBytes, 
+		validatorInfo.PublicKey,
+		selectionBytes,
 		msg.SelectionProof[:],
 		common.DomainSyncCommitteeSelectionProof,
 		state.Epoch,
@@ -171,8 +171,8 @@ func (v *SyncCommitteeContributionValidator) Handle(ctx context.Context, data []
 	}
 
 	err = v.validator.signatureVerifier.VerifySignature(
-		validatorInfo.PublicKey, 
-		msgBytes, 
+		validatorInfo.PublicKey,
+		msgBytes,
 		contributionAndProof.Signature[:],
 		common.DomainContributionAndProof,
 		state.Epoch,
@@ -182,4 +182,3 @@ func (v *SyncCommitteeContributionValidator) Handle(ctx context.Context, data []
 	}
 	return contributionAndProof, nil
 }
-

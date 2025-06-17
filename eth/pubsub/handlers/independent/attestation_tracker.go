@@ -1,7 +1,6 @@
 package independent
 
 import (
-	"github.com/probe-lab/hermes/eth/pubsub/common"
 	"context"
 	"fmt"
 	"sync"
@@ -10,6 +9,8 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+
+	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
 // AttestationInfo represents a tracked attestation
@@ -34,11 +35,11 @@ type BlockAttestationSummary struct {
 
 // AttestationTracker tracks attestations for block validation
 type AttestationTracker struct {
-	logger            *logrus.Logger
-	blockSummaries    *lru.Cache[string, *BlockAttestationSummary]
+	logger             *logrus.Logger
+	blockSummaries     *lru.Cache[string, *BlockAttestationSummary]
 	recentAttestations *lru.Cache[string, *AttestationInfo]
-	subscribers       map[string][]chan int
-	mu                sync.RWMutex
+	subscribers        map[string][]chan int
+	mu                 sync.RWMutex
 }
 
 // NewAttestationTracker creates a new attestation tracker
@@ -83,11 +84,11 @@ func (at *AttestationTracker) TrackAttestation(
 
 	// Update block summary
 	blockKey := formatBlockKey(blockRoot)
-	
+
 	at.mu.Lock()
 	summaryInterface, exists := at.blockSummaries.Get(blockKey)
 	var summary *BlockAttestationSummary
-	
+
 	if exists {
 		summary = summaryInterface
 	} else {
@@ -109,16 +110,16 @@ func (at *AttestationTracker) TrackAttestation(
 		summary.UniqueValidators[validatorIndex] = true
 		summary.AttestationCount++
 		summary.LastUpdateTime = time.Now()
-		
+
 		// Notify subscribers
 		at.notifySubscribers(blockKey, summary.AttestationCount)
 	}
 	summary.mu.Unlock()
 
 	at.logger.WithFields(logrus.Fields{
-		"block_root":       blockKey,
-		"slot":             slot,
-		"validator":        validatorIndex,
+		"block_root":        blockKey,
+		"slot":              slot,
+		"validator":         validatorIndex,
 		"attestation_count": summary.AttestationCount,
 	}).Debug("Tracked attestation")
 }
@@ -130,13 +131,13 @@ func (at *AttestationTracker) WaitForAttestations(
 	threshold int,
 ) int {
 	blockKey := formatBlockKey(blockRoot)
-	
+
 	// Check if we already have enough attestations
 	if summary, exists := at.blockSummaries.Get(blockKey); exists {
 		summary.mu.RLock()
 		count := summary.AttestationCount
 		summary.mu.RUnlock()
-		
+
 		if count >= threshold {
 			return count
 		}
@@ -170,25 +171,25 @@ func (at *AttestationTracker) WaitForAttestations(
 // GetBlockAttestationCount returns the current attestation count for a block
 func (at *AttestationTracker) GetBlockAttestationCount(blockRoot [32]byte) int {
 	blockKey := formatBlockKey(blockRoot)
-	
+
 	if summary, exists := at.blockSummaries.Get(blockKey); exists {
 		summary.mu.RLock()
 		defer summary.mu.RUnlock()
 		return summary.AttestationCount
 	}
-	
+
 	return 0
 }
 
 // GetBlockSummary returns detailed attestation info for a block
 func (at *AttestationTracker) GetBlockSummary(blockRoot [32]byte) (*BlockAttestationSummary, error) {
 	blockKey := formatBlockKey(blockRoot)
-	
+
 	summary, exists := at.blockSummaries.Get(blockKey)
 	if !exists {
 		return nil, errors.New("block not found")
 	}
-	
+
 	return summary, nil
 }
 
@@ -205,7 +206,7 @@ func (at *AttestationTracker) CleanupOldData(retentionPeriod time.Duration) {
 func (at *AttestationTracker) subscribeToBlock(blockKey string, ch chan int) {
 	at.mu.Lock()
 	defer at.mu.Unlock()
-	
+
 	at.subscribers[blockKey] = append(at.subscribers[blockKey], ch)
 }
 
@@ -213,7 +214,7 @@ func (at *AttestationTracker) subscribeToBlock(blockKey string, ch chan int) {
 func (at *AttestationTracker) unsubscribeFromBlock(blockKey string, ch chan int) {
 	at.mu.Lock()
 	defer at.mu.Unlock()
-	
+
 	subscribers := at.subscribers[blockKey]
 	for i, sub := range subscribers {
 		if sub == ch {
@@ -221,7 +222,7 @@ func (at *AttestationTracker) unsubscribeFromBlock(blockKey string, ch chan int)
 			break
 		}
 	}
-	
+
 	// Clean up empty subscriber lists
 	if len(at.subscribers[blockKey]) == 0 {
 		delete(at.subscribers, blockKey)
@@ -233,7 +234,7 @@ func (at *AttestationTracker) notifySubscribers(blockKey string, count int) {
 	at.mu.RLock()
 	subscribers := at.subscribers[blockKey]
 	at.mu.RUnlock()
-	
+
 	for _, ch := range subscribers {
 		select {
 		case ch <- count:

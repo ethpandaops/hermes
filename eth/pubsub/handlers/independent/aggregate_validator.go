@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
+	"github.com/attestantio/go-eth2-client/spec/phase0"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
-	"github.com/attestantio/go-eth2-client/spec/phase0"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
 	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
@@ -28,7 +28,7 @@ func (v *AggregateAndProofValidator) Handle(ctx context.Context, data []byte, to
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// Decode using consensus spec type
 	aggregateAndProof := &phase0.SignedAggregateAndProof{}
 	if err := aggregateAndProof.UnmarshalSSZ(decompressed); err != nil {
@@ -127,23 +127,23 @@ func (v *AggregateAndProofValidator) Handle(ctx context.Context, data []byte, to
 	if err := v.verifyAggregateAttestation(ctx, aggregate, state); err != nil {
 		return nil, err
 	}
-	
+
 	return aggregateAndProof, nil
 }
 
 func (v *AggregateAndProofValidator) verifyAggregateAttestation(ctx context.Context, attestation *phase0.Attestation, state *BeaconState) error {
 	// Get attestation data
 	data := attestation.Data
-	
+
 	// Verify attestation targets correct epoch
 	targetEpoch := data.Target.Epoch
 	currentEpoch := state.Epoch
-	
+
 	// Attestations can be included up to 32 epochs late
 	if targetEpoch > phase0.Epoch(currentEpoch) {
 		return fmt.Errorf("attestation targets future epoch %d (current: %d)", targetEpoch, currentEpoch)
 	}
-	
+
 	if phase0.Epoch(currentEpoch) > targetEpoch+32 {
 		return fmt.Errorf("attestation is too old, targets epoch %d (current: %d)", targetEpoch, currentEpoch)
 	}

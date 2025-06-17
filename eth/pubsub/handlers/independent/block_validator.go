@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/golang/snappy"
-	"github.com/pkg/errors"
 	"github.com/attestantio/go-eth2-client/spec/altair"
 	"github.com/attestantio/go-eth2-client/spec/bellatrix"
 	"github.com/attestantio/go-eth2-client/spec/capella"
 	"github.com/attestantio/go-eth2-client/spec/deneb"
 	"github.com/attestantio/go-eth2-client/spec/electra"
 	"github.com/attestantio/go-eth2-client/spec/phase0"
+	"github.com/golang/snappy"
+	"github.com/pkg/errors"
 	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
@@ -32,15 +32,15 @@ func (v *BeaconBlockValidator) Handle(ctx context.Context, data []byte, topic st
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decompress snappy data")
 	}
-	
+
 	// First, try to determine the fork version from the topic or current slot
 	// For now, we'll try each version in order from newest to oldest
-	
+
 	var block interface{}
 	var slot phase0.Slot
 	var proposerIndex phase0.ValidatorIndex
 	var signature phase0.BLSSignature
-	
+
 	// Try Electra first (newest)
 	electraBlock := &electra.SignedBeaconBlock{}
 	if err = electraBlock.UnmarshalSSZ(decompressed); err == nil {
@@ -108,7 +108,7 @@ func (v *BeaconBlockValidator) Handle(ctx context.Context, data []byte, topic st
 			}
 		}
 	}
-	
+
 	if block == nil {
 		return nil, errors.New("nil block after decoding")
 	}
@@ -156,15 +156,15 @@ func (v *BeaconBlockValidator) Handle(ctx context.Context, data []byte, topic st
 	default:
 		return nil, errors.New("unknown block type")
 	}
-	
+
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to serialize block message")
 	}
 
 	// Verify the signature
 	err = v.validator.signatureVerifier.VerifySignature(
-		validatorInfo.PublicKey, 
-		messageBytes, 
+		validatorInfo.PublicKey,
+		messageBytes,
 		signature[:],
 		common.DomainBeaconProposer,
 		common.Epoch(slot/32),
@@ -176,5 +176,3 @@ func (v *BeaconBlockValidator) Handle(ctx context.Context, data []byte, topic st
 	// Return the decoded block
 	return block, nil
 }
-
-

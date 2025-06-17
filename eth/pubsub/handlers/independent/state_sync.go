@@ -1,31 +1,31 @@
 package independent
 
 import (
-	"github.com/probe-lab/hermes/eth/pubsub/common"
 	"context"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+
+	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
 // BeaconState represents minimal beacon state needed for validation
 type BeaconState struct {
-	Slot                     common.Slot
-	Epoch                    common.Epoch
-	GenesisTime              uint64
-	GenesisValidatorsRoot    [32]byte
-	Fork                     *common.ForkInfo
-	Validators               map[common.ValidatorIndex]*common.ValidatorInfo
-	CurrentSyncCommittee     *SyncCommitteeInfo
-	NextSyncCommittee        *SyncCommitteeInfo
+	Slot                       common.Slot
+	Epoch                      common.Epoch
+	GenesisTime                uint64
+	GenesisValidatorsRoot      [32]byte
+	Fork                       *common.ForkInfo
+	Validators                 map[common.ValidatorIndex]*common.ValidatorInfo
+	CurrentSyncCommittee       *SyncCommitteeInfo
+	NextSyncCommittee          *SyncCommitteeInfo
 	CurrentJustifiedCheckpoint *Checkpoint
-	FinalizedCheckpoint      *Checkpoint
+	FinalizedCheckpoint        *Checkpoint
 }
-
 
 // SyncCommitteeInfo represents sync committee membership
 type SyncCommitteeInfo struct {
@@ -48,14 +48,14 @@ type StateProvider interface {
 
 // BeaconStateSyncer manages beacon state synchronization
 type BeaconStateSyncer struct {
-	logger        *logrus.Logger
-	provider      StateProvider
-	currentState  *BeaconState
-	committees    map[common.Epoch]map[primitives.CommitteeIndex]*common.CommitteeAssignment
+	logger         *logrus.Logger
+	provider       StateProvider
+	currentState   *BeaconState
+	committees     map[common.Epoch]map[primitives.CommitteeIndex]*common.CommitteeAssignment
 	updateInterval time.Duration
-	mu            sync.RWMutex
-	stopCh        chan struct{}
-	wg            sync.WaitGroup
+	mu             sync.RWMutex
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
 }
 
 // NewBeaconStateSyncer creates a new beacon state syncer
@@ -129,7 +129,7 @@ func (bss *BeaconStateSyncer) syncState(ctx context.Context) error {
 		bss.logger.WithError(err).Error("BeaconStateSyncer: Failed to fetch beacon state")
 		return errors.Wrap(err, "failed to fetch beacon state")
 	}
-	
+
 	bss.logger.WithField("fetch_duration", time.Since(syncStart)).Info("BeaconStateSyncer: Got beacon state from provider")
 
 	// Fetch committees for current and next epoch
@@ -151,7 +151,7 @@ func (bss *BeaconStateSyncer) syncState(ctx context.Context) error {
 	bss.currentState = state
 	bss.committees[currentEpoch] = currentCommittees
 	bss.committees[nextEpoch] = nextCommittees
-	
+
 	// Clean up old committee data
 	for epoch := range bss.committees {
 		if epoch < currentEpoch-1 {
@@ -196,7 +196,7 @@ func (bss *BeaconStateSyncer) GetValidator(index common.ValidatorIndex) (*common
 // GetCommittee returns committee assignment for a given slot and index
 func (bss *BeaconStateSyncer) GetCommittee(slot common.Slot, committeeIndex primitives.CommitteeIndex) (*common.CommitteeAssignment, error) {
 	epoch := common.SlotToEpoch(slot)
-	
+
 	bss.mu.RLock()
 	defer bss.mu.RUnlock()
 
