@@ -127,7 +127,11 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s:%d: %w", bindIP, d.cfg.UDPPort, err)
 	}
-	defer logDeferErr(conn.Close, "failed to close discovery UDP connection")
+	defer func() {
+		if err := conn.Close(); err != nil {
+			slog.Warn("failed to close discovery UDP connection", tele.LogAttrError(err))
+		}
+	}()
 
 	enodes, err := d.cfg.BootstrapNodes()
 	if err != nil {
@@ -174,10 +178,6 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 		// yes, we do
 		node := iterator.Node()
 
-		// Skip peer if it is only privately reachable
-		if node.IP().IsPrivate() {
-			continue
-		}
 		sszEncodedForkEntry := make([]byte, 16)
 		entry := enr.WithEntry(d.cfg.NetworkConfig.ETH2Key, &sszEncodedForkEntry)
 		if err = node.Record().Load(entry); err != nil {
@@ -271,4 +271,12 @@ func NewDiscoveredPeer(node *enode.Node) (*DiscoveredPeer, error) {
 	}
 
 	return pi, nil
+}
+
+// UpdateTCPPort updates the TCP port in the local node's ENR entry.
+// This is useful when the port is initially set to 0 and the OS assigns
+// a random port that needs to be advertised in the discovery network.
+func (d *Discovery) UpdateTCPPort(port int) {
+	d.node.Set(enr.TCP(port))
+	slog.Info("Updated discovery ENR with actual TCP port", "port", port)
 }

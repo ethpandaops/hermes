@@ -17,6 +17,7 @@ import (
 type DiscoveryConfig struct {
 	GenesisConfig *GenesisConfig
 	NetworkConfig *params.NetworkConfig
+	SubnetConfigs map[string]*SubnetConfig
 	Addr          string
 	UDPPort       int
 	TCPPort       int
@@ -61,15 +62,17 @@ func (d *DiscoveryConfig) enrEth2Entry() (enr.Entry, error) {
 }
 
 func (d *DiscoveryConfig) enrAttnetsEntry() enr.Entry {
-	bitV := bitfield.NewBitvector64()
-	for i := uint64(0); i < bitV.Len(); i++ {
-		bitV.SetBitAt(i, true)
-	}
+	bitV := createAttnetsBitvector(d.SubnetConfigs)
 	return enr.WithEntry(d.NetworkConfig.AttSubnetKey, bitV.Bytes())
 }
 
 func (d *DiscoveryConfig) enrSyncnetsEntry() enr.Entry {
-	bitV := bitfield.Bitvector4{byte(0x00)}
+	bitV := bitfield.NewBitvector4()
+	// Set all bits to true for sync committee subnets
+	for i := uint64(0); i < bitV.Len(); i++ {
+		bitV.SetBitAt(i, true)
+	}
+	// Return the raw bitvector bytes - Teku expects the proper SSZ-encoded byte representation
 	return enr.WithEntry(d.NetworkConfig.SyncCommsSubnetKey, bitV.Bytes())
 }
 
