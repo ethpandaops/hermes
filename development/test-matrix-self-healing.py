@@ -212,6 +212,7 @@ Remember: Each client may have slightly different p2p behavior, handshake requir
         
         try:
             self.log("Running Claude analysis...", "INFO")
+            self.log(f"Command: {' '.join(cmd[:5])}... [prompt truncated]", "DEBUG")
             
             # Run the claude command
             process = await asyncio.create_subprocess_exec(
@@ -221,10 +222,16 @@ Remember: Each client may have slightly different p2p behavior, handshake requir
                 cwd=self.project_root
             )
             
+            self.log("Claude process started, reading output...", "INFO")
+            
             response_content = []
+            line_count = 0
+            assistant_messages = 0
+            tool_uses = 0
             
             # Read output line by line
             async for line in process.stdout:
+                line_count += 1
                 line_str = line.decode('utf-8').strip()
                 if not line_str:
                     continue
@@ -233,24 +240,55 @@ Remember: Each client may have slightly different p2p behavior, handshake requir
                     # Parse JSON output
                     json_obj = json.loads(line_str)
                     
-                    # Extract content from assistant messages
-                    if isinstance(json_obj, dict) and json_obj.get('type') == 'assistant':
+                    # Log different message types
+                    msg_type = json_obj.get('type', 'unknown')
+                    
+                    if msg_type == 'system':
+                        subtype = json_obj.get('subtype', '')
+                        if subtype == 'init':
+                            self.log("Claude session initialized", "DEBUG")
+                        elif 'cost_usd' in json_obj:
+                            cost = json_obj.get('cost_usd', 0)
+                            duration_ms = json_obj.get('duration_ms', 0)
+                            self.log(f"Claude completed - Cost: ${cost:.4f}, Duration: {duration_ms}ms", "INFO")
+                    
+                    elif msg_type == 'assistant':
+                        assistant_messages += 1
                         message = json_obj.get('message', {})
+                        
+                        # Log token usage
+                        if 'usage' in message:
+                            usage = message['usage']
+                            self.log(f"Token usage - Input: {usage.get('input_tokens', 0)}, Output: {usage.get('output_tokens', 0)}", "DEBUG")
+                        
+                        # Extract content
                         if 'content' in message and isinstance(message['content'], list):
                             for item in message['content']:
-                                if isinstance(item, dict) and item.get('type') == 'text':
-                                    text = item.get('text', '').strip()
-                                    if text:
-                                        response_content.append(text)
+                                if isinstance(item, dict):
+                                    if item.get('type') == 'text':
+                                        text = item.get('text', '').strip()
+                                        if text:
+                                            response_content.append(text)
+                                            # Show preview of Claude's response
+                                            preview = text[:100] + "..." if len(text) > 100 else text
+                                            self.log(f"Claude: {preview}", "DEBUG")
+                                    elif item.get('type') == 'tool_use':
+                                        tool_uses += 1
+                                        tool_name = item.get('name', 'unknown')
+                                        self.log(f"Claude using tool: {tool_name}", "INFO")
                                         
                 except json.JSONDecodeError:
-                    # Not JSON, skip it
-                    pass
+                    # Not JSON, might be error output
+                    if line_str and not line_str.startswith('{'):
+                        self.log(f"Non-JSON output: {line_str[:100]}", "DEBUG")
                 except Exception as e:
                     self.log(f"Error parsing Claude output: {e}", "WARNING")
             
             # Wait for process to complete
             await process.wait()
+            
+            # Log summary
+            self.log(f"Claude output processing complete - Lines: {line_count}, Messages: {assistant_messages}, Tool uses: {tool_uses}", "INFO")
             
             if process.returncode != 0:
                 stderr = await process.stderr.read()
@@ -263,7 +301,10 @@ Remember: Each client may have slightly different p2p behavior, handshake requir
             
             if not response:
                 self.log("No response received from Claude", "ERROR")
+                self.log(f"Debug info - Total lines read: {line_count}, Assistant messages: {assistant_messages}", "ERROR")
                 sys.exit(1)
+            else:
+                self.log(f"Claude response assembled - Total length: {len(response)} characters", "INFO")
                 
             return response
             

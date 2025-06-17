@@ -59,8 +59,12 @@ func (p *PeerDialer) Serve(ctx context.Context) error {
 
 		// finally, start the connection establishment.
 		// The success case is handled in net_notifiee.go.
-		timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		_ = p.host.Connect(timeoutCtx, addrInfo) // ignore error, this happens all the time
+		// Use a longer timeout for devnet environments where clients may be slower to respond
+		timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := p.host.Connect(timeoutCtx, addrInfo)
+		if err != nil {
+			slog.Debug("Failed to connect to peer", "peer", addrInfo.ID, "error", err)
+		}
 		cancel()
 	}
 }

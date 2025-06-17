@@ -78,7 +78,12 @@ func (n *Node) ListenClose(net network.Network, maddr ma.Multiaddr) {}
 func (n *Node) handleNewConnection(pid peer.ID) {
 	// before we add the peer to our pool, we'll perform a handshake
 
-	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
+	// Use a longer timeout for handshakes to accommodate different client implementations
+	handshakeTimeout := n.cfg.DialTimeout
+	if handshakeTimeout < 15*time.Second {
+		handshakeTimeout = 15*time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
 	defer cancel()
 
 	ps := n.host.Peerstore()
@@ -93,9 +98,22 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 	slog.Debug("Starting handshake", tele.LogAttrPeerID(pid), "direction", direction)
 
 	// Status is required - it validates the peer is on the same network
-	st, err := n.reqResp.Status(ctx, pid)
+	// Retry status request a few times as some clients may need time to initialize
+	var st *pb.Status
+	var err error
+	for retries := 0; retries < 3; retries++ {
+		st, err = n.reqResp.Status(ctx, pid)
+		if err == nil {
+			break
+		}
+		if retries < 2 {
+			slog.Debug("Status request failed, retrying", tele.LogAttrPeerID(pid), "attempt", retries+1, tele.LogAttrError(err))
+			time.Sleep(2 * time.Second)
+		}
+	}
+	
 	if err != nil {
-		slog.Warn("Status request failed during handshake", tele.LogAttrPeerID(pid), "direction", direction, tele.LogAttrError(err))
+		slog.Warn("Status request failed after retries during handshake", tele.LogAttrPeerID(pid), "direction", direction, tele.LogAttrError(err))
 		// the handshake failed, we disconnect and remove it from our pool
 		ps.RemovePeer(pid)
 		_ = n.host.Network().ClosePeer(pid)
