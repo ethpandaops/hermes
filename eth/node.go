@@ -786,7 +786,18 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 		}
 	} else {
 		// Create Prysm client for delegated mode
-		prysmClient := &delegated.PrysmClient{}
+		scheme := "http"
+		if n.cfg.PrysmUseTLS {
+			scheme = "https"
+		}
+		grpcEndpoint := fmt.Sprintf("%s:%d", n.cfg.PrysmHost, n.cfg.PrysmPortGRPC)
+		httpEndpoint := fmt.Sprintf("%s://%s:%d", scheme, n.cfg.PrysmHost, n.cfg.PrysmPortHTTP)
+
+		prysmClient, err := delegated.NewRealPrysmClient(httpEndpoint, grpcEndpoint, n.cfg.PrysmUseTLS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Prysm client: %w", err)
+		}
+
 		routerConfig.DelegatedConfig = &delegated.DelegatedConfig{
 			PrysmClient: prysmClient,
 			Logger:      logger,
