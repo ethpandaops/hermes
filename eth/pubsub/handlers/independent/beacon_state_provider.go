@@ -7,19 +7,19 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
 	eth2client "github.com/attestantio/go-eth2-client"
 	"github.com/attestantio/go-eth2-client/api"
 	httpclient "github.com/attestantio/go-eth2-client/http"
 	"github.com/attestantio/go-eth2-client/spec"
 	"github.com/attestantio/go-eth2-client/spec/phase0"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	"github.com/probe-lab/hermes/eth/pubsub/common"
 )
 
-// HTTPStateProvider fetches beacon state from HTTP API using attestant client
+// HTTPStateProvider fetches beacon state from HTTP API
 type HTTPStateProvider struct {
 	client eth2client.Service
 	logger *logrus.Logger
@@ -29,19 +29,19 @@ type HTTPStateProvider struct {
 func NewHTTPStateProvider(endpoint string, port int, useTLS bool) *HTTPStateProvider {
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
-	
+
 	// Build the full endpoint URL
 	scheme := "http"
 	if useTLS {
 		scheme = "https"
 	}
 	fullEndpoint := fmt.Sprintf("%s://%s:%d", scheme, endpoint, port)
-	
+
 	// Create custom HTTP client with TLS configuration
 	httpClient := &http.Client{
 		Timeout: 5 * time.Minute,
 	}
-	
+
 	if useTLS {
 		// Configure TLS
 		httpClient.Transport = &http.Transport{
@@ -50,7 +50,7 @@ func NewHTTPStateProvider(endpoint string, port int, useTLS bool) *HTTPStateProv
 			},
 		}
 	}
-	
+
 	// Create attestant HTTP client
 	client, err := httpclient.New(context.Background(),
 		httpclient.WithAddress(fullEndpoint),
@@ -61,7 +61,7 @@ func NewHTTPStateProvider(endpoint string, port int, useTLS bool) *HTTPStateProv
 	if err != nil {
 		logger.WithError(err).Fatal("Failed to create HTTP client")
 	}
-	
+
 	return &HTTPStateProvider{
 		client: client,
 		logger: logger,
@@ -72,58 +72,58 @@ func NewHTTPStateProvider(endpoint string, port int, useTLS bool) *HTTPStateProv
 func (p *HTTPStateProvider) GetBeaconState(ctx context.Context, stateID string) (*BeaconState, error) {
 	p.logger.WithFields(logrus.Fields{
 		"stateID": stateID,
-	}).Info("Starting beacon state fetch using attestant client")
-	
+	}).Info("Starting beacon state fetch")
+
 	// Create a spec provider if the client supports it
 	specProvider, isSpecProvider := p.client.(eth2client.SpecProvider)
 	if !isSpecProvider {
 		return nil, errors.New("client does not support spec operations")
 	}
-	
+
 	// Get the spec to know about slots per epoch
 	specResp, err := specProvider.Spec(ctx, &api.SpecOpts{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to fetch spec")
 	}
-	
+
 	slotsPerEpoch, exists := specResp.Data["SLOTS_PER_EPOCH"].(uint64)
 	if !exists {
 		slotsPerEpoch = 32 // Default value
 	}
-	
+
 	// Check if client supports beacon state operations
 	beaconStateProvider, isBeaconStateProvider := p.client.(eth2client.BeaconStateProvider)
 	if !isBeaconStateProvider {
 		return nil, errors.New("client does not support beacon state operations")
 	}
-	
+
 	// Fetch the beacon state
 	p.logger.Info("Fetching beacon state from client")
 	fetchStart := time.Now()
-	
+
 	stateResp, err := beaconStateProvider.BeaconState(ctx, &api.BeaconStateOpts{
 		State: stateID,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to fetch beacon state")
 	}
-	
+
 	if stateResp == nil || stateResp.Data == nil {
 		return nil, errors.New("received nil beacon state")
 	}
-	
+
 	p.logger.WithFields(logrus.Fields{
 		"fetch_duration": time.Since(fetchStart),
-		"version": stateResp.Data.Version,
+		"version":        stateResp.Data.Version,
 	}).Info("Beacon state fetched successfully")
-	
+
 	// Convert to our internal representation
 	return p.convertToInternalState(stateResp.Data, slotsPerEpoch)
 }
 
 func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconState, slotsPerEpoch uint64) (*BeaconState, error) {
 	conversionStart := time.Now()
-	
+
 	// Extract common fields based on version
 	var (
 		slot                  phase0.Slot
@@ -132,9 +132,9 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 		fork                  *phase0.Fork
 		validators            []*phase0.Validator
 		currentJustified      *phase0.Checkpoint
-		finalized            *phase0.Checkpoint
+		finalized             *phase0.Checkpoint
 	)
-	
+
 	// Handle different versions
 	switch state.Version {
 	case spec.DataVersionPhase0:
@@ -148,7 +148,7 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 		validators = state.Phase0.Validators
 		currentJustified = state.Phase0.CurrentJustifiedCheckpoint
 		finalized = state.Phase0.FinalizedCheckpoint
-		
+
 	case spec.DataVersionAltair:
 		if state.Altair == nil {
 			return nil, errors.New("altair state is nil")
@@ -160,7 +160,7 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 		validators = state.Altair.Validators
 		currentJustified = state.Altair.CurrentJustifiedCheckpoint
 		finalized = state.Altair.FinalizedCheckpoint
-		
+
 	case spec.DataVersionBellatrix:
 		if state.Bellatrix == nil {
 			return nil, errors.New("bellatrix state is nil")
@@ -172,7 +172,7 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 		validators = state.Bellatrix.Validators
 		currentJustified = state.Bellatrix.CurrentJustifiedCheckpoint
 		finalized = state.Bellatrix.FinalizedCheckpoint
-		
+
 	case spec.DataVersionCapella:
 		if state.Capella == nil {
 			return nil, errors.New("capella state is nil")
@@ -184,7 +184,7 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 		validators = state.Capella.Validators
 		currentJustified = state.Capella.CurrentJustifiedCheckpoint
 		finalized = state.Capella.FinalizedCheckpoint
-		
+
 	case spec.DataVersionDeneb:
 		if state.Deneb == nil {
 			return nil, errors.New("deneb state is nil")
@@ -196,7 +196,7 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 		validators = state.Deneb.Validators
 		currentJustified = state.Deneb.CurrentJustifiedCheckpoint
 		finalized = state.Deneb.FinalizedCheckpoint
-		
+
 	case spec.DataVersionElectra:
 		if state.Electra == nil {
 			return nil, errors.New("electra state is nil")
@@ -208,14 +208,14 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 		validators = state.Electra.Validators
 		currentJustified = state.Electra.CurrentJustifiedCheckpoint
 		finalized = state.Electra.FinalizedCheckpoint
-		
+
 	default:
 		return nil, fmt.Errorf("unsupported state version: %v", state.Version)
 	}
-	
+
 	// Calculate epoch
 	epoch := uint64(slot) / slotsPerEpoch
-	
+
 	// Convert validators
 	validatorMap := make(map[common.ValidatorIndex]*common.ValidatorInfo)
 	for i, val := range validators {
@@ -228,7 +228,7 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 			WithdrawalCredentials: val.WithdrawalCredentials[:],
 		}
 	}
-	
+
 	// Get sync committees if available (Altair+)
 	var currentSyncCommittee, nextSyncCommittee *SyncCommitteeInfo
 	switch state.Version {
@@ -299,14 +299,14 @@ func (p *HTTPStateProvider) convertToInternalState(state *spec.VersionedBeaconSt
 			}
 		}
 	}
-	
+
 	p.logger.WithFields(logrus.Fields{
-		"slot":       slot,
-		"epoch":      epoch,
-		"validators": len(validators),
+		"slot":                slot,
+		"epoch":               epoch,
+		"validators":          len(validators),
 		"conversion_duration": time.Since(conversionStart),
 	}).Info("Beacon state conversion complete")
-	
+
 	return &BeaconState{
 		Slot:                  primitives.Slot(slot),
 		Epoch:                 common.Epoch(epoch),

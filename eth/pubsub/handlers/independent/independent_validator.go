@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethpandaops/ethwallclock"
 	lru "github.com/hashicorp/golang-lru/v2"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/pkg/errors"
@@ -34,6 +35,7 @@ type IndependentValidator struct {
 	committeeCache     *CommitteeCache
 	attestationTracker *AttestationTracker
 	messageClassifier  common.MessageClassifier
+	wallclock          *ethwallclock.EthereumBeaconChain
 
 	// Message validators for each type
 	validators map[common.MessageType]common.MessageValidator
@@ -42,9 +44,9 @@ type IndependentValidator struct {
 	seenMessages *lru.Cache[string, time.Time]
 
 	// Data forwarding
-	dataStream   host.DataStream
-	dsr          host.DataStreamRenderer
-	forkVersion  [4]byte
+	dataStream  host.DataStream
+	dsr         host.DataStreamRenderer
+	forkVersion [4]byte
 
 	// Metrics
 	metrics atomic.Value // stores *IndependentMetrics
@@ -205,11 +207,12 @@ func NewIndependentValidator(config *IndependentConfig) (*IndependentValidator, 
 		forkVersion:        config.ForkVersion,
 		ctx:                ctx,
 		cancel:             cancel,
+		wallclock:          nil, // Will be initialized after initial state sync
 	}
 
 	// Log fork version
 	logger.WithField("forkVersion", fmt.Sprintf("%#x", config.ForkVersion)).Info("Initializing independent validator")
-	
+
 	// Initialize message validators
 	validator.initializeValidators()
 
@@ -226,9 +229,8 @@ func (v *IndependentValidator) Start(ctx context.Context) error {
 
 	v.logger.Info("Starting independent validator")
 
-	// Start state synchronization
-	v.wg.Add(1)
-	go v.stateSyncLoop()
+	// Perform initial state sync
+	v.syncState()
 
 	// Start cleanup routines
 	v.wg.Add(1)
@@ -239,6 +241,11 @@ func (v *IndependentValidator) Start(ctx context.Context) error {
 		return errors.Wrap(err, "failed to sync initial state")
 	}
 
+	// Initialize wallclock now that we have state
+	if err := v.initializeWallclock(); err != nil {
+		return errors.Wrap(err, "failed to initialize wallclock")
+	}
+
 	v.logger.Info("Independent validator started successfully")
 	return nil
 }
@@ -246,6 +253,11 @@ func (v *IndependentValidator) Start(ctx context.Context) error {
 // Stop gracefully shuts down the validator
 func (v *IndependentValidator) Stop() error {
 	v.logger.Info("Stopping independent validator")
+
+	// Stop wallclock if initialized
+	if v.wallclock != nil {
+		v.wallclock.Stop()
+	}
 
 	// Cancel context to stop background routines
 	v.cancel()
@@ -418,25 +430,6 @@ func (v *IndependentValidator) initializeValidators() {
 	}
 }
 
-func (v *IndependentValidator) stateSyncLoop() {
-	defer v.wg.Done()
-
-	ticker := time.NewTicker(v.config.StateUpdateInterval)
-	defer ticker.Stop()
-
-	// Initial sync
-	v.syncState()
-
-	for {
-		select {
-		case <-v.ctx.Done():
-			return
-		case <-ticker.C:
-			v.syncState()
-		}
-	}
-}
-
 func (v *IndependentValidator) syncState() {
 	metrics := v.getMetrics()
 
@@ -536,6 +529,89 @@ func (v *IndependentValidator) hasState() bool {
 	return v.stateSync.GetCurrentState() != nil
 }
 
+// initializeWallclock sets up the ethereum wallclock after initial state sync
+func (v *IndependentValidator) initializeWallclock() error {
+	state := v.stateSync.GetCurrentState()
+	if state == nil {
+		return errors.New("no beacon state available")
+	}
+
+	// Create wallclock with genesis time and slot duration
+	wallclock := ethwallclock.NewEthereumBeaconChain(
+		time.Unix(int64(state.GenesisTime), 0),
+		12*time.Second, // seconds per slot
+		32,             // slots per epoch
+	)
+
+	v.wallclock = wallclock
+
+	// Register epoch change callback
+	v.wallclock.OnEpochChanged(func(current ethwallclock.Epoch) {
+		v.onEpochChanged(current)
+	})
+
+	v.logger.WithFields(logrus.Fields{
+		"genesis_time":  state.GenesisTime,
+		"current_slot":  state.Slot,
+		"current_epoch": state.Epoch,
+	}).Info("Wallclock initialized")
+
+	return nil
+}
+
+// onEpochChanged is called when the wallclock detects an epoch transition
+func (v *IndependentValidator) onEpochChanged(newEpoch ethwallclock.Epoch) {
+	v.logger.WithField("epoch", newEpoch.Number()).Info("Epoch changed, fetching new state")
+
+	// Use a goroutine to avoid blocking the wallclock callback
+	go func() {
+		// Create context with timeout for state fetch
+		ctx, cancel := context.WithTimeout(v.ctx, 2*time.Minute)
+		defer cancel()
+
+		// Thread-safe state update
+		if err := v.fetchAndUpdateState(ctx); err != nil {
+			v.logger.WithError(err).Error("Failed to update state on epoch change")
+			return
+		}
+
+		v.logger.WithField("epoch", newEpoch.Number()).Info("State updated for new epoch")
+	}()
+}
+
+// fetchAndUpdateState fetches the latest state from the HTTP provider in a thread-safe manner
+func (v *IndependentValidator) fetchAndUpdateState(ctx context.Context) error {
+	metrics := v.getMetrics()
+
+	v.logger.Info("Fetching latest beacon state")
+	fetchStart := time.Now()
+
+	// Fetch the head state
+	state, err := v.stateProvider.GetBeaconState(ctx, "head")
+	if err != nil {
+		atomic.AddUint64(&metrics.stateUpdateFailures, 1)
+		return errors.Wrap(err, "failed to fetch beacon state")
+	}
+
+	// Update state syncer with the new state (thread-safe)
+	v.stateSync.SetCurrentState(state)
+
+	// Update signature verifier with current fork
+	if state.Fork != nil {
+		v.signatureVerifier.UpdateFork(state.Fork.CurrentVersion)
+	}
+
+	atomic.AddUint64(&metrics.stateUpdates, 1)
+	v.logger.WithFields(logrus.Fields{
+		"slot":       state.Slot,
+		"epoch":      state.Epoch,
+		"validators": len(state.Validators),
+		"duration":   time.Since(fetchStart),
+	}).Info("Beacon state fetch complete")
+
+	return nil
+}
+
 func (v *IndependentValidator) computeMessageID(msg *pubsub.Message) string {
 	h := sha256.New()
 	h.Write(msg.Data)
@@ -593,4 +669,3 @@ func (v *IndependentValidator) isElectraOrLater() bool {
 	// Electra is 0x05000000, so any version >= 0x05 in the first byte is Electra or later
 	return v.forkVersion[0] >= common.ElectraForkVersion[0]
 }
-
