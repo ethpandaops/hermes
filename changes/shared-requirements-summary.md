@@ -8,14 +8,15 @@ This document summarizes common requirements and patterns identified across all 
 **Required by**: beacon_block, beacon_attestation, blob_sidecar, beacon_blocks_by_range, beacon_blocks_by_root, blob_sidecars_by_range, blob_sidecars_by_root, light client protocols
 
 **Requirements**:
-- Store blocks for at least 5 months (MIN_EPOCHS_FOR_BLOCK_REQUESTS = 33024 epochs)
-- Store blob sidecars for at least 18 days (MIN_EPOCHS_FOR_BLOB_SIDECARS_REQUESTS = 4096 epochs)
+- Store only unfinalized blocks in memory (typically 1 epoch worth)
+- Route finalized block requests to upstream beacon node
+- Cache frequently accessed finalized blocks with TTL
 - Index by slot and root for efficient retrieval
 - Track validation status of blocks
 - Support parent-child relationship queries
-- Implement pruning mechanism for old data
+- Automatic pruning when blocks become finalized
 
-**Priority**: HIGHEST - Enables multiple validation methods and req/resp protocols
+**Priority**: HIGHEST - Enables multiple validation methods while minimizing resource usage
 
 ### 1.2 Deduplication Caches (Critical - Needed by 11+ specs)
 **Required by**: All pubsub topics (attestations, blocks, slashings, exits, sync committee messages, etc.)
@@ -222,7 +223,7 @@ type DeduplicationCache interface {
 For a minimal viable implementation that avoids running an execution client:
 
 ### Required Components:
-1. **Block/Blob Storage** - Can start with in-memory only
+1. **Block Storage** - In-memory for unfinalized blocks only, proxy to upstream for finalized
 2. **Basic Deduplication** - Simple LRU caches
 3. **Fork Detection** - Hardcoded fork epochs
 4. **State Sync** - Existing implementation is sufficient
@@ -230,9 +231,10 @@ For a minimal viable implementation that avoids running an execution client:
 
 ### Can Defer:
 1. Light client protocols
-2. Persistent storage (use in-memory initially)
+2. Persistent storage (rely on upstream beacon node)
 3. Complex caching strategies
 4. Full proposer shuffling (can use beacon API)
+5. Blob storage (can proxy to upstream initially)
 
 ### Smart Validation MVP:
 1. Track attestations by block root (existing AttestationTracker)
