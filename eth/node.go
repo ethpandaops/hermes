@@ -174,11 +174,12 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 		GenesisConfig: cfg.GenesisConfig,
 		NetworkConfig: cfg.NetworkConfig,
 		SubnetConfigs: cfg.SubnetConfigs,
-		Addr:          cfg.Devp2pHost,
-		UDPPort:       cfg.Devp2pPort,
-		TCPPort:       cfg.Libp2pPort,
-		Tracer:        cfg.Tracer,
-		Meter:         cfg.Meter,
+		Addr:                 cfg.Devp2pHost,
+		UDPPort:              cfg.Devp2pPort,
+		TCPPort:              cfg.Libp2pPort,
+		AllowPrivateNetworks: cfg.AllowPrivateNetworks,
+		Tracer:               cfg.Tracer,
+		Meter:                cfg.Meter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new discovery service: %w", err)
@@ -846,4 +847,91 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 	}
 
 	return opts, nil
+}
+
+// extractTCPPortFromAddrs extracts the TCP port from the first TCP multiaddr in the list.
+// Returns 0 if no TCP port is found.
+func extractTCPPortFromAddrs(addrs []ma.Multiaddr) int {
+	for _, addr := range addrs {
+		addrStr := addr.String()
+		// Look for TCP addresses like /ip4/127.0.0.1/tcp/55554
+		if strings.Contains(addrStr, "/tcp/") {
+			parts := strings.Split(addrStr, "/tcp/")
+			if len(parts) >= 2 {
+				portStr := strings.Split(parts[1], "/")[0] // Get port, ignore any additional components
+				if port, err := strconv.Atoi(portStr); err == nil {
+					return port
+				}
+			}
+		}
+	}
+	return 0
+}
+
+type PeerAgentPrinter struct {
+	host     *host.Host
+	interval time.Duration
+}
+
+// String returns the service name
+func (p *PeerAgentPrinter) String() string {
+	return "peer-agent-printer"
+}
+
+// Serve runs the periodic peer agent printing
+func (p *PeerAgentPrinter) Serve(ctx context.Context) error {
+	ticker := time.NewTicker(p.interval)
+	defer ticker.Stop()
+
+	// Print initial summary
+	p.printPeerAgents()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			p.printPeerAgents()
+		}
+	}
+}
+
+// printPeerAgents prints a summary of connected peer agents
+func (p *PeerAgentPrinter) printPeerAgents() {
+	peers := p.host.Network().Peers()
+	if len(peers) == 0 {
+		slog.Info("No connected peers")
+		return
+	}
+
+	agentCounts := make(map[string]int)
+	for _, pid := range peers {
+		agent := p.host.AgentVersion(pid)
+		if agent == "" {
+			agent = "unknown"
+		}
+		agentCounts[agent]++
+	}
+
+	// Sort agents by count (descending) and then by name
+	type agentCount struct {
+		agent string
+		count int
+	}
+	var sorted []agentCount
+	for agent, count := range agentCounts {
+		sorted = append(sorted, agentCount{agent, count})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count != sorted[j].count {
+			return sorted[i].count > sorted[j].count
+		}
+		return sorted[i].agent < sorted[j].agent
+	})
+
+	// Print summary
+	slog.Info(fmt.Sprintf("Connected peers by agent (%d total):", len(peers)))
+	for _, ac := range sorted {
+		slog.Info(fmt.Sprintf("  %s: %d", ac.agent, ac.count))
+	}
 }
