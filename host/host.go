@@ -340,7 +340,7 @@ func (h *Host) UpdatePeerScore(scores map[peer.ID]*pubsub.PeerScoreSnapshot) {
 		}
 
 		traceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		h.cfg.DataStream.PutRecord(traceCtx, trace)
+		cancel()
 	}
 }

@@ -65,15 +65,4 @@ echo ""
 echo "[INFO] Starting Hermes..."
 echo "[DEBUG] Command: go run ./cmd/hermes --log.level=warn eth --prysm.host=127.0.0.1 --prysm.port.grpc=${PRYSM_GRPC} --prysm.port.http=${PRYSM_HTTP} --libp2p.port=0 --local.trusted.addr --chain=devnet --genesis.ssz.url=${APACHE_URL}/network-configs/genesis.ssz --config.yaml.url=${APACHE_URL}/network-configs/config.yaml --bootnodes.yaml.url=${APACHE_URL}/network-configs/boot_enr.yaml --deposit-contract-block.txt.url=${APACHE_URL}/network-configs/deposit_contract_block.txt"
 
-exec go run ./cmd/hermes --log.level=warn eth \
-  --prysm.host=127.0.0.1 \
-  --prysm.port.grpc=${PRYSM_GRPC} \
-  --prysm.port.http=${PRYSM_HTTP} \
-  --libp2p.port=0 \
-  --local.trusted.addr \
-  --chain=devnet \
-  --genesis.ssz.url=${APACHE_URL}/network-configs/genesis.ssz \
-  --config.yaml.url=${APACHE_URL}/network-configs/config.yaml \
-  --bootnodes.yaml.url=${APACHE_URL}/network-configs/boot_enr.yaml \
-  --deposit-contract-block.txt.url=${APACHE_URL}/network-configs/deposit_contract_block.txt \
-  "$@"
+exec go run ./cmd/hermes --log.level=warn eth --prysm.host=127.0.0.1 --prysm.port.grpc=${PRYSM_GRPC} --prysm.port.http=${PRYSM_HTTP} --libp2p.port=0 --local.trusted.addr --chain=devnet --genesis.ssz.url=${APACHE_URL}/network-configs/genesis.ssz --config.yaml.url=${APACHE_URL}/network-configs/config.yaml  --bootnodes.yaml.url=${APACHE_URL}/network-configs/boot_enr.yaml --deposit-contract-block.txt.url=${APACHE_URL}/network-configs/deposit_contract_block.txt  "$@"

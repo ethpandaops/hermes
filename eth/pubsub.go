@@ -44,10 +44,10 @@ func (p PubSubConfig) Validate() error {
 }
 
 type PubSub struct {
-	host *host.Host
-	cfg  *PubSubConfig
-	gs   *pubsub.PubSub
-	dsr  host.DataStreamRenderer
+	host    *host.Host
+	cfg     *PubSubConfig
+	gs      *pubsub.PubSub
+	dsr     host.DataStreamRenderer
 }
 
 func NewPubSub(h *host.Host, cfg *PubSubConfig) (*PubSub, error) {
@@ -79,39 +79,22 @@ func (p *PubSub) Serve(ctx context.Context) error {
 
 	supervisor := suture.NewSimple("pubsub")
 
+	// We don't subscribe to topics anymore - all handling is done during validation
+	// This avoids double decompression/unmarshalling
 	for _, topicName := range p.cfg.Topics {
 		topic, err := p.gs.Join(topicName)
 		if err != nil {
 			return fmt.Errorf("join pubsub topic %s: %w", topicName, err)
 		}
 		defer logDeferErr(topic.Close, fmt.Sprintf("failed closing %s topic", topicName))
-
-		// get the handler for the specific topic
-		topicHandler := p.mapPubSubTopicWithHandlers(topicName)
-
-		sub, err := topic.Subscribe()
-		if err != nil {
-			return fmt.Errorf("subscribe to pubsub topic %s: %w", topicName, err)
-		}
-
-		ts := &host.TopicSubscription{
-			Topic:   topicName,
-			LocalID: p.host.ID(),
-			Sub:     sub,
-			Handler: topicHandler,
-		}
-
-		supervisor.Add(ts)
 	}
 
 	return supervisor.Serve(ctx)
 }
 
-func (p *PubSub) mapPubSubTopicWithHandlers(topic string) host.TopicHandler {
-	// Message processing is now handled by the validators during the validation phase
-	// These handlers are no longer needed, so we return a no-op handler
-	return p.host.TracedTopicHandler(host.NoopHandler)
-}
+// mapPubSubTopicWithHandlers is no longer needed - all handling is done in validators
+
+// All message handling is now done in validators to avoid double decompression
 
 var _ pubsub.SubscriptionFilter = (*Node)(nil)
 

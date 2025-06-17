@@ -21,10 +21,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/probe-lab/hermes/eth/validation"
-	"github.com/probe-lab/hermes/eth/validation/common"
-	"github.com/probe-lab/hermes/eth/validation/delegated"
-	"github.com/probe-lab/hermes/eth/validation/independent"
+	"github.com/probe-lab/hermes/eth/pubsub/common"
+	"github.com/probe-lab/hermes/eth/pubsub/handlers"
+	"github.com/probe-lab/hermes/eth/pubsub/handlers/delegated"
+	"github.com/probe-lab/hermes/eth/pubsub/handlers/independent"
 	"github.com/probe-lab/hermes/host"
 	"github.com/probe-lab/hermes/tele"
 )
@@ -72,7 +72,7 @@ type Node struct {
 	eventCallbacks []func(ctx context.Context, event *host.TraceEvent)
 
 	// Validation router for gossipsub message validation
-	validationRouter *validation.Router
+	validationRouter *handlers.Router
 }
 
 // NewNode initializes a new [Node] using the provided configuration.
@@ -758,12 +758,10 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 	logger.SetLevel(logrus.DebugLevel)
 
 	// Create router config
-	routerConfig := &validation.RouterConfig{
+	routerConfig := &handlers.RouterConfig{
 		Mode:   common.ModeDelegated, // Default to delegated
 		Logger: logger,
 	}
-
-	//beaconEndpoint := fmt.Sprintf("http://%s:%d", n.cfg.PrysmHost, n.cfg.PrysmPortHTTP)
 
 	if n.cfg.ValidationMode == "independent" {
 		routerConfig.Mode = common.ModeIndependent
@@ -773,6 +771,9 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 			BeaconNodePortHTTP:  n.cfg.PrysmPortHTTP,
 			BeaconNodeUseTLS:    n.cfg.PrysmUseTLS,
 			StateUpdateInterval: 30 * time.Second,
+			DataStream:          n.pubSub.cfg.DataStream,
+			DataStreamRenderer:  n.pubSub.dsr,
+			ForkVersion:         [4]byte(n.cfg.ForkVersion),
 		}
 		if n.cfg.ValidationConfig != nil {
 			routerConfig.IndependentConfig.AttestationThreshold = n.cfg.ValidationConfig.AttestationThreshold
@@ -785,18 +786,16 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 			routerConfig.IndependentConfig.StateUpdateInterval = n.cfg.ValidationConfig.StateSyncInterval
 		}
 	} else {
-		// Delegated mode - accept all messages and forward to DataStream
+		// Delegated mode - accept all messages
 		routerConfig.DelegatedConfig = &delegated.DelegatedConfig{
-			Logger:             logger,
-			CacheSize:          10000,
-			DataStream:         n.pubSub.cfg.DataStream,
-			DataStreamRenderer: n.pubSub.dsr,
-			ForkVersion:        [4]byte(n.cfg.ForkVersion),
+			Logger:      logger,
+			CacheSize:   10000,
+			ForkVersion: [4]byte(n.cfg.ForkVersion),
 		}
 	}
 
 	// Create validation router
-	router, err := validation.NewRouter(routerConfig)
+	router, err := handlers.NewRouter(routerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create validation router: %w", err)
 	}
@@ -836,13 +835,11 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 			for i := 0; i < t.subnetCount; i++ {
 				topic := fmt.Sprintf("/eth2/%x/%s_%d/ssz_snappy", n.cfg.ForkDigest, t.base, i)
 				_ = router.CreateTopicValidator(topic, t.msgType)
-				// TODO: Register validator after pubsub creation
 			}
 		} else {
 			// Register single validator
 			topic := fmt.Sprintf("/eth2/%x/%s/ssz_snappy", n.cfg.ForkDigest, t.base)
 			_ = router.CreateTopicValidator(topic, t.msgType)
-			// TODO: Register validator after pubsub creation
 		}
 	}
 
