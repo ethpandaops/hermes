@@ -2,35 +2,43 @@ package delegated
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	ethpb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	ethtypes "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	lru "github.com/hashicorp/golang-lru/v2"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/prometheus/client_golang/prometheus"
+	ssz "github.com/prysmaticlabs/fastssz"
 	"github.com/sirupsen/logrus"
-	
+
 	"github.com/probe-lab/hermes/eth/validation/common"
+	"github.com/probe-lab/hermes/host"
+	"github.com/probe-lab/hermes/tele"
 )
 
 // DelegatedConfig holds configuration for DelegatedValidator
 type DelegatedConfig struct {
-	PrysmClient      *PrysmClient
-	Logger           *logrus.Logger
-	CacheSize        int
-	MetricsRegistry  prometheus.Registerer
+	Logger             *logrus.Logger
+	CacheSize          int
+	MetricsRegistry    prometheus.Registerer
+	DataStream         host.DataStream
+	DataStreamRenderer host.DataStreamRenderer
+	ForkVersion        [4]byte
 }
 
 // DelegatedValidator delegates validation to an external Prysm node
 type DelegatedValidator struct {
 	config       *DelegatedConfig
 	logger       *logrus.Logger
-	prysmClient  *PrysmClient
 	seenMessages *lru.Cache[string, time.Time]
 	metrics      atomic.Value
-	
+	dataStream   host.DataStream
+	dsr          host.DataStreamRenderer
+	forkVersion  common.ForkVersion
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	mu     sync.RWMutex
@@ -41,28 +49,30 @@ func NewDelegatedValidator(config *DelegatedConfig) (*DelegatedValidator, error)
 	if config.Logger == nil {
 		config.Logger = logrus.New()
 	}
-	
+
 	cacheSize := config.CacheSize
 	if cacheSize == 0 {
 		cacheSize = common.DefaultCacheSize
 	}
-	
+
 	seenCache, err := lru.New[string, time.Time](cacheSize)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	v := &DelegatedValidator{
 		config:       config,
 		logger:       config.Logger,
-		prysmClient:  config.PrysmClient,
 		seenMessages: seenCache,
+		dataStream:   config.DataStream,
+		dsr:          config.DataStreamRenderer,
+		forkVersion:  common.ForkVersion(config.ForkVersion),
 	}
-	
+
 	// Initialize base metrics
 	metrics := &common.BaseMetrics{}
 	v.metrics.Store(metrics)
-	
+
 	return v, nil
 }
 
@@ -70,14 +80,14 @@ func NewDelegatedValidator(config *DelegatedConfig) (*DelegatedValidator, error)
 func (v *DelegatedValidator) Start(ctx context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	
+
 	if v.ctx != nil {
 		return nil // Already started
 	}
-	
+
 	v.ctx, v.cancel = context.WithCancel(ctx)
 	v.logger.Info("Started delegated validator")
-	
+
 	return nil
 }
 
@@ -85,13 +95,13 @@ func (v *DelegatedValidator) Start(ctx context.Context) error {
 func (v *DelegatedValidator) Stop() error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	
+
 	if v.cancel != nil {
 		v.cancel()
 		v.ctx = nil
 		v.cancel = nil
 	}
-	
+
 	v.logger.Info("Stopped delegated validator")
 	return nil
 }
@@ -108,14 +118,14 @@ func (v *DelegatedValidator) GetMetrics() common.ValidatorMetrics {
 func (v *DelegatedValidator) ValidateMessage(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
 	start := time.Now()
 	messageType := common.ClassifyMessage(msg.GetTopic())
-	
+
 	// Record metrics
 	defer func() {
 		if m := v.GetMetrics(); m != nil {
 			m.RecordValidationDuration(messageType, time.Since(start).Seconds())
 		}
 	}()
-	
+
 	// Check message deduplication
 	msgID := string(msg.ID)
 	if _, seen := v.seenMessages.Get(msgID); seen {
@@ -123,35 +133,35 @@ func (v *DelegatedValidator) ValidateMessage(ctx context.Context, msg *pubsub.Me
 		return pubsub.ValidationIgnore
 	}
 	v.seenMessages.Add(msgID, time.Now())
-	
+
 	// Validate based on message type
 	var result pubsub.ValidationResult
 	switch messageType {
-	case common.BeaconBlockMessage:
+	case common.MessageBeaconBlock:
 		result = v.validateBeaconBlock(ctx, msg)
-	case common.BeaconAggregateAndProofMessage:
+	case common.MessageAggregateAndProof:
 		result = v.validateAggregateAndProof(ctx, msg)
-	case common.VoluntaryExitMessage:
+	case common.MessageVoluntaryExit:
 		result = v.validateVoluntaryExit(ctx, msg)
-	case common.ProposerSlashingMessage:
+	case common.MessageProposerSlashing:
 		result = v.validateProposerSlashing(ctx, msg)
-	case common.AttesterSlashingMessage:
+	case common.MessageAttesterSlashing:
 		result = v.validateAttesterSlashing(ctx, msg)
-	case common.BeaconAttestationMessage:
+	case common.MessageAttestation:
 		result = v.validateAttestation(ctx, msg)
-	case common.SyncCommitteeContributionMessage:
+	case common.MessageContributionAndProof:
 		result = v.validateSyncContribution(ctx, msg)
-	case common.SyncCommitteeMessage:
+	case common.MessageSyncCommittee:
 		result = v.validateSyncCommittee(ctx, msg)
-	case common.BlsToExecutionChangeMessage:
+	case common.MessageBlsToExecutionChange:
 		result = v.validateBlsToExecutionChange(ctx, msg)
-	case common.BlobSidecarMessage:
+	case common.MessageBlobSidecar:
 		result = v.validateBlobSidecar(ctx, msg)
 	default:
 		v.logger.WithField("topic", msg.Topic).Warn("Unknown message type")
 		result = pubsub.ValidationIgnore
 	}
-	
+
 	// Record validation result
 	resultStr := "accept"
 	switch result {
@@ -161,175 +171,335 @@ func (v *DelegatedValidator) ValidateMessage(ctx context.Context, msg *pubsub.Me
 		resultStr = "ignore"
 	}
 	v.recordResult(messageType, resultStr)
-	
+
 	return result
 }
 
 func (v *DelegatedValidator) validateBeaconBlock(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	block := &ethpb.SignedBeaconBlock{}
-	if err := block.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal beacon block")
-		return pubsub.ValidationReject
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+		block ssz.Unmarshaler
+	)
+
+	switch v.forkVersion {
+	case common.Phase0ForkVersion:
+		block = &ethtypes.SignedBeaconBlock{}
+	case common.AltairForkVersion:
+		block = &ethtypes.SignedBeaconBlockAltair{}
+	case common.BellatrixForkVersion:
+		block = &ethtypes.SignedBeaconBlockBellatrix{}
+	case common.CapellaForkVersion:
+		block = &ethtypes.SignedBeaconBlockCapella{}
+	case common.DenebForkVersion:
+		block = &ethtypes.SignedBeaconBlockDeneb{}
+	case common.ElectraForkVersion:
+		block = &ethtypes.SignedBeaconBlockElectra{}
+	default:
+		slog.Warn("Unrecognized fork version", "fork", v.forkVersion.String())
+		return pubsub.ValidationAccept
 	}
-	
-	// TODO: Implement proper Prysm client calls
-	// For now, accept all valid blocks
-	_ = block
-	
+
+	evt, err = v.dsr.RenderPayload(evt, msg, block)
+	if err != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+		return pubsub.ValidationAccept
+	}
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
 	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateAggregateAndProof(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	aggregateAndProof := &ethpb.SignedAggregateAttestationAndProof{}
-	if err := aggregateAndProof.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal aggregate and proof")
-		return pubsub.ValidationReject
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	switch v.forkVersion {
+	case common.ElectraForkVersion:
+		evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProofElectra{})
+	default:
+		evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProof{})
 	}
-	
-	resp, err := v.prysmClient.client.SubmitSignedAggregateSelectionProof(ctx, &ethpb.SignedAggregateSubmitRequest{
-		SignedAggregateAndProof: aggregateAndProof,
-	})
-	
+
 	if err != nil {
-		v.logger.WithError(err).Debug("Prysm rejected aggregate and proof")
-		return pubsub.ValidationReject
-	}
-	
-	// Check response
-	if resp != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
 		return pubsub.ValidationAccept
 	}
-	
-	return pubsub.ValidationIgnore
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
+	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateVoluntaryExit(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	exit := &ethpb.SignedVoluntaryExit{}
-	if err := exit.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal voluntary exit")
-		return pubsub.ValidationReject
-	}
-	
-	resp, err := v.prysmClient.client.ProposeExit(ctx, exit)
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.VoluntaryExit{})
 	if err != nil {
-		v.logger.WithError(err).Debug("Prysm rejected voluntary exit")
-		return pubsub.ValidationReject
-	}
-	
-	if resp != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
 		return pubsub.ValidationAccept
 	}
-	
-	return pubsub.ValidationIgnore
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
+	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateProposerSlashing(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	slashing := &ethpb.ProposerSlashing{}
-	if err := slashing.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal proposer slashing")
-		return pubsub.ValidationReject
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.ProposerSlashing{})
+	if err != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+		return pubsub.ValidationAccept
 	}
-	
-	// Prysm doesn't have a direct proposer slashing submission method
-	// Accept if it parses correctly
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
 	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateAttesterSlashing(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	slashing := &ethpb.AttesterSlashing{}
-	if err := slashing.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal attester slashing")
-		return pubsub.ValidationReject
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.AttesterSlashing{})
+	if err != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+		return pubsub.ValidationAccept
 	}
-	
-	// Prysm doesn't have a direct attester slashing submission method
-	// Accept if it parses correctly
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
 	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateAttestation(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	att := &ethpb.Attestation{}
-	if err := att.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal attestation")
-		return pubsub.ValidationReject
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	switch v.forkVersion {
+	case common.ElectraForkVersion:
+		evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.SingleAttestation{})
+	default:
+		evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.Attestation{})
 	}
-	
-	resp, err := v.prysmClient.client.ProposeAttestation(ctx, att)
+
 	if err != nil {
-		v.logger.WithError(err).Debug("Prysm rejected attestation")
-		return pubsub.ValidationReject
-	}
-	
-	if resp != nil && resp.AttestationDataRoot != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
 		return pubsub.ValidationAccept
 	}
-	
-	return pubsub.ValidationIgnore
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
+	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateSyncContribution(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	contribution := &ethpb.SignedContributionAndProof{}
-	if err := contribution.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal sync contribution")
-		return pubsub.ValidationReject
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.SignedContributionAndProof{})
+	if err != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+		return pubsub.ValidationAccept
 	}
-	
-	// Prysm doesn't have a direct sync contribution submission endpoint
-	// We'll accept it if it parses correctly
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
 	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateSyncCommittee(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	syncMsg := &ethpb.SyncCommitteeMessage{}
-	if err := syncMsg.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal sync committee message")
-		return pubsub.ValidationReject
-	}
-	
-	// Submit sync committee message
-	_, err := v.prysmClient.client.SubmitSyncMessage(ctx, syncMsg)
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	//lint:ignore SA1019 gRPC API deprecated but still supported until v8 (2026)
+	evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.SyncCommitteeMessage{})
 	if err != nil {
-		v.logger.WithError(err).Debug("Prysm rejected sync committee message")
-		return pubsub.ValidationReject
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+		return pubsub.ValidationAccept
 	}
-	
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
 	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateBlsToExecutionChange(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	change := &ethpb.SignedBLSToExecutionChange{}
-	if err := change.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal BLS to execution change")
-		return pubsub.ValidationReject
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	evt, err = v.dsr.RenderPayload(evt, msg, &ethtypes.BLSToExecutionChange{})
+	if err != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+		return pubsub.ValidationAccept
 	}
-	
-	// Prysm v6 should have this endpoint
-	// For now, accept if it parses correctly
+
+	if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+	}
+
 	return pubsub.ValidationAccept
 }
 
 func (v *DelegatedValidator) validateBlobSidecar(ctx context.Context, msg *pubsub.Message) pubsub.ValidationResult {
-	// Extract subnet from topic
-	subnet, err := common.ExtractBlobSubnet(msg.GetTopic())
-	if err != nil {
-		v.logger.WithError(err).Debug("Failed to extract blob subnet")
-		return pubsub.ValidationReject
+	// In delegated mode, we accept all messages and forward them
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      "HANDLE_MESSAGE",
+			Topic:     msg.GetTopic(),
+			PeerID:    msg.ReceivedFrom,
+			Timestamp: time.Now(),
+		}
+	)
+
+	switch v.forkVersion {
+	case common.DenebForkVersion, common.ElectraForkVersion:
+		blob := ethtypes.BlobSidecar{}
+		evt, err = v.dsr.RenderPayload(evt, msg, &blob)
+		if err != nil {
+			slog.Warn(
+				"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+			)
+			return pubsub.ValidationAccept
+		}
+
+		if err := v.dataStream.PutRecord(ctx, evt); err != nil {
+			slog.Warn(
+				"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+			)
+		}
+	default:
+		slog.Warn("Blob sidecar for unsupported fork version", "fork", v.forkVersion[:])
 	}
-	
-	sidecar := &ethpb.BlobSidecar{}
-	if err := sidecar.UnmarshalSSZ(msg.Data); err != nil {
-		v.logger.WithError(err).Debug("Failed to unmarshal blob sidecar")
-		return pubsub.ValidationReject
-	}
-	
-	// Verify blob index matches subnet
-	if uint64(sidecar.Index) != subnet {
-		v.logger.Debug("Blob index doesn't match subnet")
-		return pubsub.ValidationReject
-	}
-	
-	// Accept if parsing succeeds and index matches
-	// Full KZG validation would be done by Prysm if it had the endpoint
+
 	return pubsub.ValidationAccept
 }
 

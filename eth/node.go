@@ -690,12 +690,13 @@ func (n *Node) setupValidation(ctx context.Context) ([]pubsub.Option, error) {
 			routerConfig.IndependentConfig.StateUpdateInterval = n.cfg.ValidationConfig.StateSyncInterval
 		}
 	} else {
-		// Create Prysm client for delegated mode
-		prysmClient := &delegated.PrysmClient{}
+		// Delegated mode - accept all messages and forward to DataStream
 		routerConfig.DelegatedConfig = &delegated.DelegatedConfig{
-			PrysmClient: prysmClient,
-			Logger:      logger,
-			CacheSize:   10000,
+			Logger:             logger,
+			CacheSize:          10000,
+			DataStream:         n.pubSub.cfg.DataStream,
+			DataStreamRenderer: n.pubSub.dsr,
+			ForkVersion:        [4]byte(n.cfg.ForkVersion),
 		}
 	}
 
