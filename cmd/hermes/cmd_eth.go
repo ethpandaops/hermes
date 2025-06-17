@@ -64,15 +64,15 @@ var ethConfig = &struct {
 	SubscriptionTopics         []string
 	PrintPeerAgents            bool
 	// Validation configuration
-	ValidationMode               string
-	ValidationAttestationThreshold    int
-	ValidationAttestationPercent      float64
-	ValidationTimeout                 time.Duration
-	ValidationSignatureBatchSize      int
-	ValidationCacheSize              int
-	ValidationMaxConcurrent          int
-	ValidationStateSyncInterval      time.Duration
-	ValidationCommitteeCacheEpochs   int
+	ValidationMode                 string
+	ValidationAttestationThreshold int
+	ValidationAttestationPercent   float64
+	ValidationTimeout              time.Duration
+	ValidationSignatureBatchSize   int
+	ValidationCacheSize            int
+	ValidationMaxConcurrent        int
+	ValidationStateSyncInterval    time.Duration
+	ValidationCommitteeCacheEpochs int
 }{
 	PrivateKeyStr:               "", // unset means it'll be generated
 	Chain:                       params.MainnetName,
@@ -112,15 +112,15 @@ var ethConfig = &struct {
 	SubnetBlobSidecarEnd:       0,
 	PrintPeerAgents:            true, // default to true
 	// Default validation configuration values.
-	ValidationMode:               "delegated",
-	ValidationAttestationThreshold:    10,
-	ValidationAttestationPercent:      0.0,
-	ValidationTimeout:                 5 * time.Second,
-	ValidationSignatureBatchSize:      64,
-	ValidationCacheSize:              10000,
-	ValidationMaxConcurrent:          100,
-	ValidationStateSyncInterval:      30 * time.Second,
-	ValidationCommitteeCacheEpochs:   4,
+	ValidationMode:                 "delegated",
+	ValidationAttestationThreshold: 10,
+	ValidationAttestationPercent:   0.0,
+	ValidationTimeout:              5 * time.Second,
+	ValidationSignatureBatchSize:   64,
+	ValidationCacheSize:            10000,
+	ValidationMaxConcurrent:        100,
+	ValidationStateSyncInterval:    30 * time.Second,
+	ValidationCommitteeCacheEpochs: 4,
 }
 
 var cmdEth = &cli.Command{
@@ -406,6 +406,13 @@ var cmdEthFlags = []cli.Flag{
 			return nil
 		},
 	},
+	&cli.BoolFlag{
+		Name:        "print-peer-agents",
+		EnvVars:     []string{"HERMES_ETH_PRINT_PEER_AGENTS"},
+		Usage:       "Enable periodic printing of connected peer agents (every 10s)",
+		Value:       ethConfig.PrintPeerAgents,
+		Destination: &ethConfig.PrintPeerAgents,
+	},
 	// Validation configuration flags
 	&cli.StringFlag{
 		Name:        "validation.mode",
@@ -478,13 +485,6 @@ var cmdEthFlags = []cli.Flag{
 		Value:       ethConfig.ValidationCommitteeCacheEpochs,
 		Destination: &ethConfig.ValidationCommitteeCacheEpochs,
 		Category:    flagCategoryValidation,
-	},
-	&cli.BoolFlag{
-		Name:        "print-peer-agents",
-		EnvVars:     []string{"HERMES_ETH_PRINT_PEER_AGENTS"},
-		Usage:       "Enable periodic printing of connected peer agents (every 10s)",
-		Value:       ethConfig.PrintPeerAgents,
-		Destination: &ethConfig.PrintPeerAgents,
 	},
 }
 
@@ -575,7 +575,6 @@ func cmdEthAction(c *cli.Context) error {
 		KinesisStream:               rootConfig.KinesisStream,
 		MaxPeers:                    ethConfig.MaxPeers,
 		DialConcurrency:             ethConfig.DialConcurrency,
-		AllowPrivateNetworks:        ethConfig.Chain == params.DevnetName, // Allow private networks for devnet
 		PrintPeerAgents:             ethConfig.PrintPeerAgents,
 		// PubSub config
 		PubSubSubscriptionRequestLimit: 200, // Prysm: beacon-chain/p2p/pubsub_filter.go#L22
@@ -591,10 +590,10 @@ func cmdEthAction(c *cli.Context) error {
 			AttestationPercent:      ethConfig.ValidationAttestationPercent,
 			ValidationTimeout:       ethConfig.ValidationTimeout,
 			SignatureBatchSize:      ethConfig.ValidationSignatureBatchSize,
-			CacheSize:              ethConfig.ValidationCacheSize,
+			CacheSize:               ethConfig.ValidationCacheSize,
 			MaxConcurrentValidation: ethConfig.ValidationMaxConcurrent,
-			StateSyncInterval:      ethConfig.ValidationStateSyncInterval,
-			CommitteeCacheEpochs:   ethConfig.ValidationCommitteeCacheEpochs,
+			StateSyncInterval:       ethConfig.ValidationStateSyncInterval,
+			CommitteeCacheEpochs:    ethConfig.ValidationCommitteeCacheEpochs,
 		},
 	}
 
