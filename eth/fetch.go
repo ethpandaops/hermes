@@ -57,6 +57,7 @@ func FetchBootnodeENRsFromURL(ctx context.Context, url string) ([]string, error)
 	}
 
 	var enrs []string
+
 	err = yaml.Unmarshal(data, &enrs)
 	if err != nil {
 		return nil, err
@@ -106,9 +107,7 @@ func FetchGenesisDetailsFromURL(ctx context.Context, url string) (uint64, [32]by
 	}
 	defer response.Body.Close()
 
-	// Read only the first 40 bytes (8 bytes for GenesisTime + 32 bytes for GenesisValidatorsRoot)
-	data := make([]byte, 40)
-	_, err = io.ReadFull(response.Body, data)
+	data, err := io.ReadAll(response.Body)
 	if err != nil {
 		return 0, [32]byte{}, err
 	}

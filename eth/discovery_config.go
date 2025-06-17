@@ -17,6 +17,7 @@ import (
 type DiscoveryConfig struct {
 	GenesisConfig *GenesisConfig
 	NetworkConfig *params.NetworkConfig
+	SubnetConfigs map[string]*SubnetConfig
 	Addr          string
 	UDPPort       int
 	TCPPort       int
@@ -61,10 +62,7 @@ func (d *DiscoveryConfig) enrEth2Entry() (enr.Entry, error) {
 }
 
 func (d *DiscoveryConfig) enrAttnetsEntry() enr.Entry {
-	bitV := bitfield.NewBitvector64()
-	for i := uint64(0); i < bitV.Len(); i++ {
-		bitV.SetBitAt(i, true)
-	}
+	bitV := createAttnetsBitvector(d.SubnetConfigs)
 	return enr.WithEntry(d.NetworkConfig.AttSubnetKey, bitV.Bytes())
 }
 
