@@ -16,6 +16,7 @@ import (
 	ssz "github.com/prysmaticlabs/fastssz"
 	"github.com/thejerf/suture/v4"
 
+	"github.com/probe-lab/hermes/eth/events"
 	"github.com/probe-lab/hermes/host"
 	"github.com/probe-lab/hermes/tele"
 )
@@ -67,10 +68,10 @@ func NewPubSub(h *host.Host, cfg *PubSubConfig) (*PubSub, error) {
 
 	switch cfg.DataStream.OutputType() {
 	case host.DataStreamOutputTypeFull:
-		dsr = NewFullOutput(cfg)
+		dsr = events.NewFullOutput(cfg.Encoder)
 	// TODO: If wanted, add a new S3ParquetOutput
 	default:
-		dsr = NewKinesisOutput(cfg)
+		dsr = events.NewKinesisOutput(cfg.Encoder, cfg.GenesisTime, cfg.SecondsPerSlot)
 	}
 
 	return &PubSub{
