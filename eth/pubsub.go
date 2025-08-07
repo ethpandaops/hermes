@@ -186,6 +186,8 @@ func (p *PubSub) handleBeaconBlock(ctx context.Context, msg *pubsub.Message) err
 		block = &ethtypes.SignedBeaconBlockDeneb{}
 	case ElectraForkVersion:
 		block = &ethtypes.SignedBeaconBlockElectra{}
+	case FuluForkVersion:
+		block = &ethtypes.SignedBeaconBlockFulu{}
 	default:
 		return fmt.Errorf("handleBeaconBlock(): unrecognized fork-version: %x", p.cfg.ForkVersion)
 	}
@@ -224,10 +226,10 @@ func (p *PubSub) handleAttestation(ctx context.Context, msg *pubsub.Message) err
 	)
 
 	switch p.cfg.ForkVersion {
-	case ElectraForkVersion:
-		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SingleAttestation{})
-	default:
+	case Phase0ForkVersion, AltairForkVersion, BellatrixForkVersion, CapellaForkVersion, DenebForkVersion:
 		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.Attestation{})
+	default:
+		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SingleAttestation{})
 	}
 
 	if err != nil {
@@ -263,10 +265,10 @@ func (p *PubSub) handleAggregateAndProof(ctx context.Context, msg *pubsub.Messag
 	)
 
 	switch p.cfg.ForkVersion {
-	case ElectraForkVersion:
-		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProofElectra{})
-	default:
+	case Phase0ForkVersion, AltairForkVersion, BellatrixForkVersion, CapellaForkVersion, DenebForkVersion:
 		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProof{})
+	default:
+		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProofElectra{})
 	}
 
 	if err != nil {
@@ -520,6 +522,41 @@ func (p *PubSub) handleBlobSidecar(ctx context.Context, msg *pubsub.Message) err
 		}
 	default:
 		return fmt.Errorf("non recognized fork-version: %d", p.cfg.ForkVersion[:])
+	}
+
+	return nil
+}
+
+func (p *PubSub) handleDataColumnSidecar(ctx context.Context, msg *pubsub.Message) error {
+	if msg == nil || msg.Topic == nil || *msg.Topic == "" {
+		return fmt.Errorf("handleDataColumnSidecar(): nil message or topic")
+	}
+
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      eventTypeHandleMessage,
+			Topic:     msg.GetTopic(),
+			PeerID:    p.host.ID(),
+			Timestamp: time.Now(),
+		}
+	)
+
+	sidecar := ethtypes.DataColumnSidecar{}
+
+	evt, err = p.dsr.RenderPayload(evt, msg, &sidecar)
+	if err != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+
+		return nil
+	}
+
+	if err := p.cfg.DataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
 	}
 
 	return nil

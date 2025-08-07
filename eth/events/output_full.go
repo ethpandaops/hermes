@@ -41,6 +41,11 @@ type TraceEventElectraBlock struct {
 	Block *ethtypes.SignedBeaconBlockElectra
 }
 
+type TraceEventFuluBlock struct {
+	host.TraceEventPayloadMetaData
+	Block *ethtypes.SignedBeaconBlockFulu
+}
+
 type TraceEventAttestation struct {
 	host.TraceEventPayloadMetaData
 	Attestation *ethtypes.Attestation
@@ -101,6 +106,11 @@ type TraceEventAttesterSlashing struct {
 	AttesterSlashing *ethtypes.AttesterSlashing
 }
 
+type TraceEventDataColumnSidecar struct {
+	host.TraceEventPayloadMetaData
+	DataColumnSidecar *ethtypes.DataColumnSidecar
+}
+
 // FullOutput is a renderer for full output.
 type FullOutput struct {
 	encoder encoder.NetworkEncoding
@@ -141,6 +151,8 @@ func (t *FullOutput) RenderPayload(evt *host.TraceEvent, msg *pubsub.Message, ds
 		payload, err = t.renderDenebBlock(msg, d)
 	case *ethtypes.SignedBeaconBlockElectra:
 		payload, err = t.renderElectraBlock(msg, d)
+	case *ethtypes.SignedBeaconBlockFulu:
+		payload, err = t.renderFuluBlock(msg, d)
 	case *ethtypes.Attestation:
 		payload, err = t.renderAttestation(msg, d)
 	case *ethtypes.AttestationElectra:
@@ -161,6 +173,8 @@ func (t *FullOutput) RenderPayload(evt *host.TraceEvent, msg *pubsub.Message, ds
 		payload, err = t.renderBLSToExecutionChange(msg, d)
 	case *ethtypes.BlobSidecar:
 		payload, err = t.renderBlobSidecar(msg, d)
+	case *ethtypes.DataColumnSidecar:
+		payload, err = t.renderDataColumnSidecar(msg, d)
 	case *ethtypes.ProposerSlashing:
 		payload, err = t.renderProposerSlashing(msg, d)
 	case *ethtypes.AttesterSlashing:
@@ -263,6 +277,22 @@ func (t *FullOutput) renderElectraBlock(
 	block *ethtypes.SignedBeaconBlockElectra,
 ) (*TraceEventElectraBlock, error) {
 	return &TraceEventElectraBlock{
+		TraceEventPayloadMetaData: host.TraceEventPayloadMetaData{
+			PeerID:  msg.ReceivedFrom.String(),
+			Topic:   msg.GetTopic(),
+			Seq:     msg.GetSeqno(),
+			MsgID:   hex.EncodeToString([]byte(msg.ID)),
+			MsgSize: len(msg.Data),
+		},
+		Block: block,
+	}, nil
+}
+
+func (t *FullOutput) renderFuluBlock(
+	msg *pubsub.Message,
+	block *ethtypes.SignedBeaconBlockFulu,
+) (*TraceEventFuluBlock, error) {
+	return &TraceEventFuluBlock{
 		TraceEventPayloadMetaData: host.TraceEventPayloadMetaData{
 			PeerID:  msg.ReceivedFrom.String(),
 			Topic:   msg.GetTopic(),
@@ -463,5 +493,21 @@ func (t *FullOutput) renderAttesterSlashing(
 			MsgSize: len(msg.Data),
 		},
 		AttesterSlashing: as,
+	}, nil
+}
+
+func (t *FullOutput) renderDataColumnSidecar(
+	msg *pubsub.Message,
+	sidecar *ethtypes.DataColumnSidecar,
+) (*TraceEventDataColumnSidecar, error) {
+	return &TraceEventDataColumnSidecar{
+		TraceEventPayloadMetaData: host.TraceEventPayloadMetaData{
+			PeerID:  msg.ReceivedFrom.String(),
+			Topic:   msg.GetTopic(),
+			Seq:     msg.GetSeqno(),
+			MsgID:   hex.EncodeToString([]byte(msg.ID)),
+			MsgSize: len(msg.Data),
+		},
+		DataColumnSidecar: sidecar,
 	}, nil
 }
