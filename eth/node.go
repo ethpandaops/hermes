@@ -198,8 +198,8 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := pryClient.FetchAndSetBlobSchedule(ctx); err != nil {
-		slog.Warn("Failed to fetch BlobSchedule from Prysm", tele.LogAttrError(err))
 		// Continue even if this fails, as the network might not have BPO enabled
+		slog.Warn("Failed to fetch BlobSchedule from Prysm", tele.LogAttrError(err))
 	}
 
 	// Recalculate fork digest after loading BlobSchedule
