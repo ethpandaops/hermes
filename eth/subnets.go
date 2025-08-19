@@ -51,6 +51,9 @@ func HasSubnets(topic string) (subnets uint64, hasSubnets bool) {
 	case p2p.GossipBlobSidecarMessage:
 		return globalBeaconConfig.BlobsidecarSubnetCount, true
 
+	case p2p.GossipDataColumnSidecarMessage:
+		return globalBeaconConfig.DataColumnSidecarSubnetCount, true
+
 	default:
 		return uint64(0), false
 	}

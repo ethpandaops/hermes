@@ -379,12 +379,13 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("get finalized finality checkpoints: %w", err)
 	}
 
-	status := &eth.Status{
-		ForkDigest:     n.cfg.ForkDigest[:],
-		FinalizedRoot:  chainHead.FinalizedBlockRoot,
-		FinalizedEpoch: chainHead.FinalizedEpoch,
-		HeadRoot:       chainHead.HeadBlockRoot,
-		HeadSlot:       chainHead.HeadSlot,
+	status := &eth.StatusV2{
+		ForkDigest:            n.cfg.ForkDigest[:],
+		FinalizedRoot:         chainHead.FinalizedBlockRoot,
+		FinalizedEpoch:        chainHead.FinalizedEpoch,
+		HeadRoot:              chainHead.HeadBlockRoot,
+		HeadSlot:              chainHead.HeadSlot,
+		EarliestAvailableSlot: 0, // TODO: This should be calculated based on data availability window
 	}
 	n.reqResp.SetStatus(status)
 

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/core/signing"
 	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p"
 	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p/encoder"
 	"github.com/OffchainLabs/prysm/v6/config/params"
@@ -389,6 +388,8 @@ func cmdEthAction(c *cli.Context) error {
 	// Print hermes configuration for debugging purposes
 	printEthConfig()
 
+	fmt.Printf("ethConfig.Chain: %v", ethConfig.Chain)
+
 	var config *eth.NetworkConfig
 	// Derive network configuration
 	if ethConfig.Chain != params.DevnetName {
@@ -415,12 +416,11 @@ func cmdEthAction(c *cli.Context) error {
 		config = c
 	}
 
-	// Overriding configuration so that functions like ComputForkDigest take the
-	// correct input data from the global configuration.
+	// Overriding configuration so that params.ForkDigest and other functions
+	// use the correct network configuration
 	params.OverrideBeaconConfig(config.Beacon)
 	params.OverrideBeaconNetworkConfig(config.Network)
 
-	genesisRoot := config.Genesis.GenesisValidatorRoot
 	genesisTime := config.Genesis.GenesisTime
 
 	// compute fork version and fork digest
@@ -432,15 +432,23 @@ func cmdEthAction(c *cli.Context) error {
 		return fmt.Errorf("compute fork version for epoch %d: %w", currentEpoch, err)
 	}
 
-	forkDigest, err := signing.ComputeForkDigest(currentForkVersion[:], genesisRoot)
-	if err != nil {
-		return fmt.Errorf("create fork digest (%s, %x): %w", genesisTime, genesisRoot, err)
-	}
+	// Use params.ForkDigest which handles BPO correctly for Fulu+
+	forkDigest := params.ForkDigest(currentEpoch)
 
-	// Overriding configuration so that functions like ComputForkDigest take the
-	// correct input data from the global configuration.
-	params.OverrideBeaconConfig(config.Beacon)
-	params.OverrideBeaconNetworkConfig(config.Network)
+	// Debug: Let's see what the network schedule looks like
+	fmt.Printf("Current epoch: %d\n", currentEpoch)
+	fmt.Printf("Current slot: %d\n", currentSlot)
+	fmt.Printf("Genesis time: %v\n", genesisTime)
+	fmt.Printf("Current fork version: %x\n", currentForkVersion)
+	fmt.Printf("Calculated fork digest: %x\n", forkDigest)
+
+	// Show network schedule entries
+	entries := params.SortedNetworkScheduleEntries()
+	fmt.Printf("Network schedule entries:\n")
+	for _, entry := range entries {
+		fmt.Printf("  Epoch %d: version=%x digest=%x maxBlobs=%d\n",
+			entry.Epoch, entry.ForkVersion, entry.ForkDigest, entry.MaxBlobsPerBlock)
+	}
 
 	cfg := &eth.NodeConfig{
 		GenesisConfig:               config.Genesis,
