@@ -424,7 +424,7 @@ func cmdEthAction(c *cli.Context) error {
 	genesisTime := config.Genesis.GenesisTime
 
 	// compute fork version and fork digest
-	currentSlot := slots.Since(genesisTime)
+	currentSlot := slots.CurrentSlot(genesisTime)
 	currentEpoch := slots.ToEpoch(currentSlot)
 
 	currentForkVersion, err := eth.GetCurrentForkVersion(currentEpoch, config.Beacon)
