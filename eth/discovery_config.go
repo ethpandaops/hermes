@@ -30,17 +30,16 @@ type DiscoveryConfig struct {
 // byte slice. Finally, it returns an ENR entry with the eth2 key and the
 // encoded fork information.
 func (d *DiscoveryConfig) enrEth2Entry() (enr.Entry, error) {
-	genesisTime := d.GenesisConfig.GenesisTime
+	var (
+		currentSlot     = slots.CurrentSlot(d.GenesisConfig.GenesisTime)
+		currentEpoch    = slots.ToEpoch(currentSlot)
+		digest          = params.ForkDigest(currentEpoch)
+		nextEntry       = params.NextNetworkScheduleEntry(currentEpoch)
+		nextForkVersion [4]byte
+		nextForkEpoch   primitives.Epoch
+	)
 
-	currentSlot := slots.CurrentSlot(genesisTime)
-	currentEpoch := slots.ToEpoch(currentSlot)
-
-	digest := params.ForkDigest(currentEpoch)
-
-	nextEntry := params.NextNetworkScheduleEntry(currentEpoch)
-	var nextForkVersion [4]byte
-	var nextForkEpoch primitives.Epoch
-	// Check if there is a next fork
+	// Do we have another fork lined-up?
 	if nextEntry.Epoch > currentEpoch {
 		copy(nextForkVersion[:], nextEntry.ForkVersion[:])
 		nextForkEpoch = nextEntry.Epoch

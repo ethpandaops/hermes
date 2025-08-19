@@ -380,7 +380,8 @@ func (p *PrysmClient) isOnNetwork(ctx context.Context, hermesForkDigest [4]byte)
 	currentEpoch := slots.ToEpoch(chainHead.HeadSlot)
 
 	// Use params.ForkDigest which handles BPO correctly for Fulu+
-	// Use the current epoch from chain head, not the fork activation epoch
+	// We *must* use the current epoch from chain head, not the fork activation
+	// epoch in-order for our fork digests to be valid.
 	forkDigest := params.ForkDigest(currentEpoch)
 
 	// check if our version is within the versions of the node
@@ -450,14 +451,14 @@ func (p *PrysmClient) FetchAndSetBlobSchedule(ctx context.Context) error {
 		return fmt.Errorf("failed unmarshalling spec response: %w", err)
 	}
 
-	// Check if BLOB_SCHEDULE exists in the spec
+	// Check if BLOB_SCHEDULE exists in the spec, if no BLOB_SCHEDULE
+	// that means we're not on a BPO-enabled network.
 	blobScheduleRaw, exists := specResp.Data["BLOB_SCHEDULE"]
 	if !exists {
-		// No BLOB_SCHEDULE means we're not on a BPO-enabled network
 		return nil
 	}
 
-	// Parse the BLOB_SCHEDULE - it could be either a JSON string or an array
+	// Parse the BLOB_SCHEDULE.
 	var blobScheduleData []struct {
 		Epoch            string `json:"EPOCH"`
 		MaxBlobsPerBlock string `json:"MAX_BLOBS_PER_BLOCK"`
@@ -465,16 +466,15 @@ func (p *PrysmClient) FetchAndSetBlobSchedule(ctx context.Context) error {
 
 	switch v := blobScheduleRaw.(type) {
 	case string:
-		// It's a JSON string, parse it
 		if err := json.Unmarshal([]byte(v), &blobScheduleData); err != nil {
 			return fmt.Errorf("failed parsing BLOB_SCHEDULE string: %w", err)
 		}
 	case []interface{}:
-		// It's already an array, convert it
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
 			return fmt.Errorf("failed marshaling BLOB_SCHEDULE array: %w", err)
 		}
+
 		if err := json.Unmarshal(jsonBytes, &blobScheduleData); err != nil {
 			return fmt.Errorf("failed parsing BLOB_SCHEDULE array: %w", err)
 		}
@@ -482,35 +482,34 @@ func (p *PrysmClient) FetchAndSetBlobSchedule(ctx context.Context) error {
 		return fmt.Errorf("BLOB_SCHEDULE has unexpected type: %T", blobScheduleRaw)
 	}
 
-	// Convert to prysm's BlobScheduleEntry format
+	// Convert to BlobScheduleEntry format.
 	blobSchedule := make([]params.BlobScheduleEntry, len(blobScheduleData))
 	for i, entry := range blobScheduleData {
 		epoch, err := strconv.ParseUint(entry.Epoch, 10, 64)
 		if err != nil {
 			return fmt.Errorf("failed parsing EPOCH %s: %w", entry.Epoch, err)
 		}
+
 		maxBlobs, err := strconv.ParseUint(entry.MaxBlobsPerBlock, 10, 64)
 		if err != nil {
 			return fmt.Errorf("failed parsing MAX_BLOBS_PER_BLOCK %s: %w", entry.MaxBlobsPerBlock, err)
 		}
+
 		blobSchedule[i] = params.BlobScheduleEntry{
 			Epoch:            primitives.Epoch(epoch),
 			MaxBlobsPerBlock: maxBlobs,
 		}
 	}
 
-	// Update the beacon config with the BlobSchedule
+	// Update the beacon config with the BlobSchedule + set GenesisValidatorsRoot.
+	// This is needed so when calling InitializeForkSchedule() it has the
+	// right deetz to calculate correct digests.
 	config := params.BeaconConfig().Copy()
 	config.BlobSchedule = blobSchedule
-
-	// Set the GenesisValidatorsRoot so InitializeForkSchedule can calculate fork digests
 	copy(config.GenesisValidatorsRoot[:], p.genesis.GenesisValidatorRoot)
-
-	// Initialize the fork schedule to calculate ForkVersion and ForkDigest fields
-	// This will now properly calculate BPO fork digests since we have GenesisValidatorsRoot
 	config.InitializeForkSchedule()
 
-	// Override the config with updated BlobSchedule
+	// Override the config with updated BlobSchedule.
 	params.OverrideBeaconConfig(config)
 
 	return nil

@@ -216,7 +216,9 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("prysm client not in correct fork_digest")
 	}
 
-	// initialize the pubsub topic handlers AFTER recalculating fork digest
+	// Init the pubsub topic handlers AFTER recalculating fork digest
+	// If we don't do this, we'll be subscribing under the incorrect fork
+	// digest, and nobody wants that.
 	pubSubConfig := &PubSubConfig{
 		Topics:         cfg.getDesiredFullTopics(cfg.GossipSubMessageEncoder),
 		ForkVersion:    cfg.ForkVersion,
@@ -399,7 +401,7 @@ func (n *Node) Start(ctx context.Context) error {
 		FinalizedEpoch:        chainHead.FinalizedEpoch,
 		HeadRoot:              chainHead.HeadBlockRoot,
 		HeadSlot:              chainHead.HeadSlot,
-		EarliestAvailableSlot: 0, // TODO: This should be calculated based on data availability window
+		EarliestAvailableSlot: 0, // TODO: This should be calculated based on data availability? Seems fine for hermes at the moment though.
 	}
 	n.reqResp.SetStatus(status)
 
