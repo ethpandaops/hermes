@@ -78,6 +78,8 @@ func (k *KinesisOutput) RenderPayload(evt *host.TraceEvent, msg *pubsub.Message,
 		payload, err = k.renderBLSToExecutionChange(msg, d)
 	case *ethtypes.BlobSidecar:
 		payload, err = k.renderBlobSidecar(msg, d)
+	case *ethtypes.DataColumnSidecar:
+		payload, err = k.renderDataColumnSidecar(msg, d)
 	case *ethtypes.ProposerSlashing:
 		payload, err = k.renderProposerSlashing(msg, d)
 	case *ethtypes.AttesterSlashing:
