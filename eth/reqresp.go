@@ -62,8 +62,13 @@ type ReqResp struct {
 	delegate peer.ID // peer ID that we delegate requests to
 
 	metaDataMu sync.RWMutex
-	metaData   *pb.MetaDataV2
+	metaData   *pb.MetaDataV2 // We store V2 internally to support all fields including CustodyGroupCount
 
+	// Status Storage Strategy:
+	// We store StatusV2 internally (with EarliestAvailableSlot field) to support both v1 and v2 protocols.
+	// - For v1 protocol requests: we convert V2 -> V1 by dropping the extra field
+	// - For v2 protocol requests: we use the full V2 struct
+	// This allows us to maintain backward compatibility while supporting new Fulu/PeerDAS features.
 	statusMu  sync.RWMutex
 	status    *pb.StatusV2
 	statusLim *rate.Limiter
@@ -182,7 +187,49 @@ func (r *ReqResp) isFuluOrLater() bool {
 	return currentEpoch >= beaconConfig.FuluForkEpoch
 }
 
+// getProtocolID returns the appropriate protocol ID for a given topic name
+// based on the current fork. This centralizes the version selection logic
+// and makes the code cleaner by avoiding scattered isFuluOrLater() checks.
+func (r *ReqResp) getProtocolID(topicName string) protocol.ID {
+	var topic string
+
+	// Determine the correct protocol version based on fork and topic
+	if r.isFuluOrLater() {
+		switch topicName {
+		case "status":
+			topic = p2p.RPCStatusTopicV2
+		case "metadata":
+			topic = p2p.RPCMetaDataTopicV3
+		default:
+			// For topics without Fulu-specific versions, use the provided topic name
+			topic = topicName
+		}
+	} else {
+		// Pre-Fulu: use standard versions
+		switch topicName {
+		case "status":
+			topic = p2p.RPCStatusTopicV1
+		case "metadata":
+			// Altair+ uses v2, Phase0 uses v1
+			// This could be refined further based on specific fork
+			topic = p2p.RPCMetaDataTopicV2
+		default:
+			topic = topicName
+		}
+	}
+
+	// If the topic is already a full protocol path, use it directly
+	if strings.HasPrefix(topic, "/eth2/beacon_chain/req/") {
+		return r.protocolID(topic)
+	}
+
+	// Otherwise return as-is (for backward compatibility)
+	return r.protocolID(topic)
+}
+
 func (r *ReqResp) cpyStatus() *pb.Status {
+	// Helper function to get a v1-compatible Status from our internal StatusV2 storage.
+	// This is used when we need to send v1 status messages to older nodes.
 	r.statusMu.RLock()
 	defer r.statusMu.RUnlock()
 
@@ -190,7 +237,7 @@ func (r *ReqResp) cpyStatus() *pb.Status {
 		return nil
 	}
 
-	// Convert StatusV2 to Status for v1 compatibility
+	// Convert StatusV2 to Status for v1 compatibility by dropping the EarliestAvailableSlot field
 	return &pb.Status{
 		ForkDigest:     bytes.Clone(r.status.ForkDigest),
 		FinalizedRoot:  bytes.Clone(r.status.FinalizedRoot),
@@ -535,6 +582,11 @@ func (r *ReqResp) statusV2Handler(ctx context.Context, upstream network.Stream) 
 }
 
 func (r *ReqResp) metadataV1Handler(ctx context.Context, stream network.Stream) (map[string]any, error) {
+	// NOTE: Protocol version vs struct version misalignment in prysm:
+	// - MetadataV1 protocol -> sends MetaDataV0 struct (seq + attnets only)
+	// - MetadataV2 protocol -> sends MetaDataV1 struct (seq + attnets + syncnets)
+	// - MetadataV3 protocol -> sends MetaDataV2 struct (seq + attnets + syncnets + custody)
+	// This is prysm's convention where protocol version is one ahead of struct version.
 	r.metaDataMu.RLock()
 	metaData := &pb.MetaDataV0{
 		SeqNumber: r.metaData.SeqNumber,
@@ -555,8 +607,8 @@ func (r *ReqResp) metadataV1Handler(ctx context.Context, stream network.Stream) 
 }
 
 func (r *ReqResp) metadataV2Handler(ctx context.Context, stream network.Stream) (map[string]any, error) {
+	// NOTE: MetadataV2 protocol sends MetaDataV1 struct (see version misalignment comment in metadataV1Handler)
 	r.metaDataMu.RLock()
-	// Send MetaDataV1 for v2 protocol (v2 doesn't have custody group count)
 	metaData := &pb.MetaDataV1{
 		SeqNumber: r.metaData.SeqNumber,
 		Attnets:   r.metaData.Attnets,
@@ -578,6 +630,8 @@ func (r *ReqResp) metadataV2Handler(ctx context.Context, stream network.Stream) 
 }
 
 func (r *ReqResp) metadataV3Handler(ctx context.Context, stream network.Stream) (map[string]any, error) {
+	// NOTE: MetadataV3 protocol sends MetaDataV2 struct (see version misalignment comment in metadataV1Handler)
+	// V3 adds CustodyGroupCount field for PeerDAS support in Fulu fork
 	r.metaDataMu.RLock()
 	metaData := &pb.MetaDataV2{
 		SeqNumber:         r.metaData.SeqNumber,
@@ -728,12 +782,7 @@ func (r *ReqResp) Status(ctx context.Context, pid peer.ID) (status *pb.Status, e
 	}()
 
 	slog.Info("Perform status request", tele.LogAttrPeerID(pid))
-	// Use status v2 for Fulu and later
-	statusTopic := p2p.RPCStatusTopicV1
-	if r.isFuluOrLater() {
-		statusTopic = p2p.RPCStatusTopicV2
-	}
-	stream, err := r.host.NewStream(ctx, pid, r.protocolID(statusTopic))
+	stream, err := r.host.NewStream(ctx, pid, r.getProtocolID("status"))
 	if err != nil {
 		return nil, fmt.Errorf("new stream to peer %s: %w", pid, err)
 	}
@@ -908,14 +957,9 @@ func (r *ReqResp) MetaData(ctx context.Context, pid peer.ID) (resp *pb.MetaDataV
 	}()
 
 	slog.Debug("Perform metadata request", tele.LogAttrPeerID(pid))
-	// Use metadata v3 for Fulu and later (PeerDAS support)
-	metadataTopic := p2p.RPCMetaDataTopicV2
-	if r.isFuluOrLater() {
-		metadataTopic = p2p.RPCMetaDataTopicV3
-	}
-	stream, err := r.host.NewStream(ctx, pid, r.protocolID(metadataTopic))
+	stream, err := r.host.NewStream(ctx, pid, r.getProtocolID("metadata"))
 	if err != nil {
-		return resp, fmt.Errorf("new %s stream to peer %s: %w", metadataTopic, pid, err)
+		return resp, fmt.Errorf("new metadata stream to peer %s: %w", pid, err)
 	}
 	defer logDeferErr(stream.Reset, "failed closing stream") // no-op if closed
 

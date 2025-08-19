@@ -388,8 +388,6 @@ func cmdEthAction(c *cli.Context) error {
 	// Print hermes configuration for debugging purposes
 	printEthConfig()
 
-	fmt.Printf("ethConfig.Chain: %v", ethConfig.Chain)
-
 	var config *eth.NetworkConfig
 	// Derive network configuration
 	if ethConfig.Chain != params.DevnetName {
@@ -434,21 +432,6 @@ func cmdEthAction(c *cli.Context) error {
 
 	// Use params.ForkDigest which handles BPO correctly for Fulu+
 	forkDigest := params.ForkDigest(currentEpoch)
-
-	// Debug: Let's see what the network schedule looks like
-	fmt.Printf("Current epoch: %d\n", currentEpoch)
-	fmt.Printf("Current slot: %d\n", currentSlot)
-	fmt.Printf("Genesis time: %v\n", genesisTime)
-	fmt.Printf("Current fork version: %x\n", currentForkVersion)
-	fmt.Printf("Calculated fork digest: %x\n", forkDigest)
-
-	// Show network schedule entries
-	entries := params.SortedNetworkScheduleEntries()
-	fmt.Printf("Network schedule entries:\n")
-	for _, entry := range entries {
-		fmt.Printf("  Epoch %d: version=%x digest=%x maxBlobs=%d\n",
-			entry.Epoch, entry.ForkVersion, entry.ForkDigest, entry.MaxBlobsPerBlock)
-	}
 
 	cfg := &eth.NodeConfig{
 		GenesisConfig:               config.Genesis,

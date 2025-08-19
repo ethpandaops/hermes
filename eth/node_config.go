@@ -519,15 +519,19 @@ func (n *NodeConfig) getDesiredFullTopics(encoder encoder.NetworkEncoding) []str
 			// Get the subnet IDs to subscribe to.
 			subnetsToSubscribe := GetSubscribedSubnets(config, subnets)
 
+			slog.Debug("Topic with subnets", "base", topicBase, "subnet_count", len(subnetsToSubscribe))
 			// Add topics for each subnet.
 			for _, subnet := range subnetsToSubscribe {
 				fullTopics = append(fullTopics, n.composeEthTopicWithSubnet(topicFormat, encoder, subnet))
 			}
 		} else {
-			fullTopics = append(fullTopics, n.composeEthTopic(topicFormat, encoder))
+			fullTopic := n.composeEthTopic(topicFormat, encoder)
+			slog.Debug("Topic without subnets", "base", topicBase, "full", fullTopic)
+			fullTopics = append(fullTopics, fullTopic)
 		}
 	}
 
+	slog.Info("Generated gossipsub topics", "total_count", len(fullTopics))
 	return fullTopics
 }
 

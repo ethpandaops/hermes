@@ -90,6 +90,7 @@ func (p *PubSub) Serve(ctx context.Context) error {
 	supervisor := suture.NewSimple("pubsub")
 
 	for _, topicName := range p.cfg.Topics {
+		slog.Info("Joining pubsub topic", "topic", topicName)
 		topic, err := p.gs.Join(topicName)
 		if err != nil {
 			return fmt.Errorf("join pubsub topic %s: %w", topicName, err)
