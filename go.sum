@@ -15,8 +15,8 @@ github.com/DataDog/zstd v1.5.5/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwS
 github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible/go.mod h1:r7JcOSlj0wfOMncg0iLm8Leh48TZaKVeNIfJntJ2wa0=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
-github.com/OffchainLabs/prysm/v6 v6.0.4 h1:aqWCb2U3LfeahzjORvxXYsL1ebKWT1AUu3Ya3y7LApE=
-github.com/OffchainLabs/prysm/v6 v6.0.4/go.mod h1:lMkHT3gWiCOqo4rbuhLTU4FoQ/THni9v6z4w9P6FRyU=
+github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250818194132-53df29b07f57 h1:Gt4OaGMFDdq2roN0d5ebFoTxVBlODgdET0OnqIpEA/8=
+github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250818194132-53df29b07f57/go.mod h1:6UhEQHOVb5VCmJcTNNfAuByBtI/vnhDdXy2nvWXFzKU=
 github.com/Shopify/sarama v1.19.0/go.mod h1:FVkBWblsNy7DGZRfXLU0O9RCGt5g3g3yEuWXgklEdEo=
 github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
 github.com/VictoriaMetrics/fastcache v1.12.2 h1:N0y9ASrJ0F6h0QaC3o6uJb3NIZ9VKLjCM7NQbSmF7WI=
@@ -444,8 +444,8 @@ github.com/libp2p/go-libp2p v0.41.1 h1:8ecNQVT5ev/jqALTvisSJeVNvXYJyK4NhQx1nNRXQ
 github.com/libp2p/go-libp2p v0.41.1/go.mod h1:DcGTovJzQl/I7HMrby5ZRjeD0kQkGiy+9w6aEkSZpRI=
 github.com/libp2p/go-libp2p-asn-util v0.4.1 h1:xqL7++IKD9TBFMgnLPZR6/6iYhawHKHl950SO9L6n94=
 github.com/libp2p/go-libp2p-asn-util v0.4.1/go.mod h1:d/NI6XZ9qxw67b4e+NgpQexCIiFYJjErASrYW4PFDN8=
-github.com/libp2p/go-libp2p-mplex v0.9.0 h1:R58pDRAmuBXkYugbSSXR9wrTX3+1pFM1xP2bLuodIq8=
-github.com/libp2p/go-libp2p-mplex v0.9.0/go.mod h1:ro1i4kuwiFT+uMPbIDIFkcLs1KRbNp0QwnUXM+P64Og=
+github.com/libp2p/go-libp2p-mplex v0.10.0 h1:6NKusNu1cw1A/RKb+Lm5aPGFk7HWVIXxl2azpwWqUxc=
+github.com/libp2p/go-libp2p-mplex v0.10.0/go.mod h1:7RT3qPFhDqz4yp5K5QwZB5vE902N8DmED3+e453fNrg=
 github.com/libp2p/go-libp2p-pubsub v0.13.1 h1:tV3ttzzZSCk0EtEXnxVmWIXgjVxXx+20Jwjbs/Ctzjo=
 github.com/libp2p/go-libp2p-pubsub v0.13.1/go.mod h1:MKPU5vMI8RRFyTP0HfdsF9cLmL1nHAeJm44AxJGJx44=
 github.com/libp2p/go-libp2p-testing v0.12.0 h1:EPvBb4kKMWO29qP4mZGyhVzUyR25dvfUIK5WDu6iPUA=

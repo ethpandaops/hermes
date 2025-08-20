@@ -440,6 +440,7 @@ func desiredPubSubBaseTopics() []string {
 		p2p.GossipSyncCommitteeMessage,
 		p2p.GossipBlsToExecutionChangeMessage,
 		p2p.GossipBlobSidecarMessage,
+		p2p.GossipDataColumnSidecarMessage,
 	}
 }
 
@@ -474,6 +475,9 @@ func topicFormatFromBase(topicBase string) (string, error) {
 
 	case p2p.GossipBlobSidecarMessage:
 		return p2p.BlobSubnetTopicFormat, nil
+
+	case p2p.GossipDataColumnSidecarMessage:
+		return p2p.DataColumnSubnetTopicFormat, nil
 
 	default:
 		return "", fmt.Errorf("unrecognized gossip topic base: %s", topicBase)
@@ -520,7 +524,8 @@ func (n *NodeConfig) getDesiredFullTopics(encoder encoder.NetworkEncoding) []str
 				fullTopics = append(fullTopics, n.composeEthTopicWithSubnet(topicFormat, encoder, subnet))
 			}
 		} else {
-			fullTopics = append(fullTopics, n.composeEthTopic(topicFormat, encoder))
+			fullTopic := n.composeEthTopic(topicFormat, encoder)
+			fullTopics = append(fullTopics, fullTopic)
 		}
 	}
 

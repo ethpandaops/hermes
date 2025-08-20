@@ -90,6 +90,7 @@ func (p *PubSub) Serve(ctx context.Context) error {
 	supervisor := suture.NewSimple("pubsub")
 
 	for _, topicName := range p.cfg.Topics {
+		slog.Info("Joining pubsub topic", "topic", topicName)
 		topic, err := p.gs.Join(topicName)
 		if err != nil {
 			return fmt.Errorf("join pubsub topic %s: %w", topicName, err)
@@ -139,6 +140,8 @@ func (p *PubSub) mapPubSubTopicWithHandlers(topic string) host.TopicHandler {
 		return p.handleBlsToExecutionChangeMessage
 	case strings.Contains(topic, p2p.GossipBlobSidecarMessage):
 		return p.handleBlobSidecar
+	case strings.Contains(topic, p2p.GossipDataColumnSidecarMessage):
+		return p.handleDataColumnSidecar
 	default:
 		return p.host.TracedTopicHandler(host.NoopHandler)
 	}
@@ -228,8 +231,10 @@ func (p *PubSub) handleAttestation(ctx context.Context, msg *pubsub.Message) err
 	switch p.cfg.ForkVersion {
 	case Phase0ForkVersion, AltairForkVersion, BellatrixForkVersion, CapellaForkVersion, DenebForkVersion:
 		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.Attestation{})
-	default:
+	case ElectraForkVersion, FuluForkVersion:
 		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SingleAttestation{})
+	default:
+		return fmt.Errorf("handleAttestation(): unrecognized fork-version: %x", p.cfg.ForkVersion)
 	}
 
 	if err != nil {
@@ -267,8 +272,10 @@ func (p *PubSub) handleAggregateAndProof(ctx context.Context, msg *pubsub.Messag
 	switch p.cfg.ForkVersion {
 	case Phase0ForkVersion, AltairForkVersion, BellatrixForkVersion, CapellaForkVersion, DenebForkVersion:
 		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProof{})
-	default:
+	case ElectraForkVersion, FuluForkVersion:
 		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProofElectra{})
+	default:
+		return fmt.Errorf("handleAggregateAndProof(): unrecognized fork-version: %x", p.cfg.ForkVersion)
 	}
 
 	if err != nil {
@@ -503,7 +510,7 @@ func (p *PubSub) handleBlobSidecar(ctx context.Context, msg *pubsub.Message) err
 	)
 
 	switch p.cfg.ForkVersion {
-	case DenebForkVersion, ElectraForkVersion:
+	case DenebForkVersion, ElectraForkVersion, FuluForkVersion:
 		blob := ethtypes.BlobSidecar{}
 
 		evt, err = p.dsr.RenderPayload(evt, msg, &blob)

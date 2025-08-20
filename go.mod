@@ -1,8 +1,8 @@
 module github.com/probe-lab/hermes
 
-go 1.24.0
+go 1.24.5
 
-toolchain go1.24.2
+replace github.com/OffchainLabs/prysm/v6 => github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250818194132-53df29b07f57
 
 require (
 	github.com/OffchainLabs/prysm/v6 v6.0.4
@@ -19,7 +19,7 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/iand/pontium v0.3.15
 	github.com/libp2p/go-libp2p v0.41.1
-	github.com/libp2p/go-libp2p-mplex v0.9.0
+	github.com/libp2p/go-libp2p-mplex v0.10.0
 	github.com/libp2p/go-libp2p-pubsub v0.13.1
 	github.com/lmittmann/tint v1.1.2
 	github.com/multiformats/go-multiaddr v0.15.0
