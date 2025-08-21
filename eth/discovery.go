@@ -178,7 +178,7 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 			continue
 		}
 		sszEncodedForkEntry := make([]byte, 16)
-		entry := enr.WithEntry(d.cfg.NetworkConfig.ETH2Key, &sszEncodedForkEntry)
+		entry := enr.WithEntry(eth2EnrKey, &sszEncodedForkEntry)
 		if err = node.Record().Load(entry); err != nil {
 			// failed reading eth2 enr entry, likely because it doesn't exist
 			continue

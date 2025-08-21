@@ -14,6 +14,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const (
+	eth2EnrKey = "eth2" // The `eth2` ENR entry advertises the node's view of the fork schedule with an ssz-encoded ENRForkID value.
+)
+
 type DiscoveryConfig struct {
 	GenesisConfig *GenesisConfig
 	NetworkConfig *params.NetworkConfig
@@ -56,7 +60,7 @@ func (d *DiscoveryConfig) enrEth2Entry() (enr.Entry, error) {
 		return nil, fmt.Errorf("marshal enr fork id: %w", err)
 	}
 
-	return enr.WithEntry(d.NetworkConfig.ETH2Key, enc), nil
+	return enr.WithEntry(eth2EnrKey, enc), nil
 }
 
 func (d *DiscoveryConfig) enrAttnetsEntry() enr.Entry {

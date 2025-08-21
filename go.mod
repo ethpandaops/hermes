@@ -2,7 +2,7 @@ module github.com/probe-lab/hermes
 
 go 1.24.5
 
-replace github.com/OffchainLabs/prysm/v6 => github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250818194132-53df29b07f57
+replace github.com/OffchainLabs/prysm/v6 => github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250820235730-c5135f699535
 
 require (
 	github.com/OffchainLabs/prysm/v6 v6.0.4

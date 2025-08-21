@@ -15,8 +15,8 @@ github.com/DataDog/zstd v1.5.5/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwS
 github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible/go.mod h1:r7JcOSlj0wfOMncg0iLm8Leh48TZaKVeNIfJntJ2wa0=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
-github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250818194132-53df29b07f57 h1:Gt4OaGMFDdq2roN0d5ebFoTxVBlODgdET0OnqIpEA/8=
-github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250818194132-53df29b07f57/go.mod h1:6UhEQHOVb5VCmJcTNNfAuByBtI/vnhDdXy2nvWXFzKU=
+github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250820235730-c5135f699535 h1:kloXWuI4dwnvuGwUzGITWzipwGITJgSuBcD9TIUgOqk=
+github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250820235730-c5135f699535/go.mod h1:6UhEQHOVb5VCmJcTNNfAuByBtI/vnhDdXy2nvWXFzKU=
 github.com/Shopify/sarama v1.19.0/go.mod h1:FVkBWblsNy7DGZRfXLU0O9RCGt5g3g3yEuWXgklEdEo=
 github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
 github.com/VictoriaMetrics/fastcache v1.12.2 h1:N0y9ASrJ0F6h0QaC3o6uJb3NIZ9VKLjCM7NQbSmF7WI=
