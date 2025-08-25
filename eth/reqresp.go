@@ -30,7 +30,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	"github.com/prysmaticlabs/go-bitfield"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
@@ -45,6 +44,9 @@ type ReqRespConfig struct {
 	ForkDigest [4]byte
 	Encoder    encoder.NetworkEncoding
 	DataStream hermeshost.DataStream
+
+	AttestationSubnetConfig *SubnetConfig
+	SyncSubnetConfig        *SubnetConfig
 
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
@@ -76,6 +78,7 @@ type ReqResp struct {
 	// metrics
 	meterRequestCounter metric.Int64Counter
 	latencyHistogram    metric.Float64Histogram
+	goodbyeCounter      metric.Int64Counter
 }
 
 type ContextStreamHandler func(context.Context, network.Stream) (map[string]any, error)
@@ -87,15 +90,15 @@ func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 
 	md := &pb.MetaDataV2{
 		SeqNumber:         0,
-		Attnets:           bitfield.NewBitvector64(),
-		Syncnets:          bitfield.Bitvector4{byte(0x00)},
+		Attnets:           BitArrayFromAttestationSubnets(cfg.AttestationSubnetConfig.Subnets),
+		Syncnets:          BitArrayFromSyncSubnets(cfg.SyncSubnetConfig.Subnets),
 		CustodyGroupCount: 0,
 	}
 
-	// fake to support all attnets
-	for i := uint64(0); i < md.Attnets.Len(); i++ {
-		md.Attnets.SetBitAt(i, true)
-	}
+	slog.Info("Composed local MetaData",
+		"attnets", md.Attnets,
+		"syncnets", md.Syncnets,
+	)
 
 	p := &ReqResp{
 		host:      h,
@@ -116,6 +119,14 @@ func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("new request_latency histogram: %w", err)
+	}
+
+	p.goodbyeCounter, err = cfg.Meter.Int64Counter(
+		"goodbye_messages",
+		metric.WithDescription("Counter for goodbye messages received"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("new goodbye_messages counter: %w", err)
 	}
 
 	return p, nil
@@ -301,7 +312,7 @@ func (r *ReqResp) wrapStreamHandler(ctx context.Context, name string, handler Co
 		agentVersion := "n.a."
 		if err == nil {
 			if av, ok := rawVal.(string); ok {
-				agentVersion = av
+				agentVersion = normalizeAgentVersion(av)
 			}
 		}
 
@@ -397,6 +408,32 @@ func (r *ReqResp) goodbyeHandler(ctx context.Context, stream network.Stream) (ma
 	msg, found := types.GoodbyeCodeMessages[req]
 	if found {
 		if _, err := r.host.Peerstore().Get(stream.Conn().RemotePeer(), peerstoreKeyIsHandshaked); err == nil {
+			var (
+				agentVersion = "unknown"
+				reason       = "unknown"
+			)
+
+			// Get agent version (client) for the peer.
+			rawVal, err := r.host.Peerstore().Get(stream.Conn().RemotePeer(), "AgentVersion")
+			if err == nil {
+				if av, ok := rawVal.(string); ok {
+					agentVersion = normalizeAgentVersion(av)
+				}
+			}
+
+			// This will be one of GoodbyeCodeMessages.
+			if found {
+				reason = msg
+			}
+
+			r.goodbyeCounter.Add(ctx, 1, metric.WithAttributes(
+				[]attribute.KeyValue{
+					attribute.Int64("code", int64(req)),
+					attribute.String("reason", reason),
+					attribute.String("agent", agentVersion),
+				}...,
+			))
+
 			slog.Info("Received goodbye message", tele.LogAttrPeerID(stream.Conn().RemotePeer()), "msg", msg)
 		} else {
 			slog.Debug("Received goodbye message", tele.LogAttrPeerID(stream.Conn().RemotePeer()), "msg", msg)
@@ -603,6 +640,10 @@ func (r *ReqResp) metadataV1Handler(ctx context.Context, stream network.Stream) 
 		"Attnets":   hex.EncodeToString(metaData.Attnets.Bytes()),
 	}
 
+	slog.Info(
+		"metadata response",
+		"attnets", metaData.Attnets,
+	)
 	return traceData, stream.Close()
 }
 
@@ -625,7 +666,11 @@ func (r *ReqResp) metadataV2Handler(ctx context.Context, stream network.Stream) 
 		"Attnets":   hex.EncodeToString(metaData.Attnets.Bytes()),
 		"Syncnets":  hex.EncodeToString(metaData.Syncnets.Bytes()),
 	}
-
+	slog.Info(
+		"metadata response",
+		"attnets", metaData.Attnets,
+		"synccommittees", metaData.Syncnets,
+	)
 	return traceData, stream.Close()
 }
 
@@ -1345,4 +1390,31 @@ func (r *ReqResp) getBlockForForkVersion(forkV ForkVersion, encoding encoder.Net
 		sblk, _ := blocks.NewSignedBeaconBlock(&pb.SignedBeaconBlock{})
 		return sblk, fmt.Errorf("unrecognized fork_version (received:%s) (ours: %s) (global: %s)", forkV, r.cfg.ForkDigest, DenebForkVersion)
 	}
+}
+
+// normalizeAgentVersion extracts the client name from the agent version string
+// to reduce metric cardinality.
+func normalizeAgentVersion(agentVersion string) string {
+	// List of known consensus layer clients
+	knownClients := []string{
+		"prysm", "lighthouse", "nimbus", "lodestar", "grandine", "teku", "erigon", "caplin",
+	}
+
+	// Convert to lowercase for case-insensitive matching.
+	lowerAgent := strings.ToLower(agentVersion)
+
+	// Try to match against known clients.
+	for _, client := range knownClients {
+		if strings.Contains(lowerAgent, client) {
+			return client
+		}
+	}
+
+	// Extract first part before slash if present.
+	parts := strings.Split(lowerAgent, "/")
+	if len(parts) > 0 && parts[0] != "" {
+		return parts[0]
+	}
+
+	return "unknown"
 }

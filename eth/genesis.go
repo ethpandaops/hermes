@@ -26,7 +26,7 @@ var (
 	ElectraForkVersion   ForkVersion
 	FuluForkVersion      ForkVersion
 
-	globalBeaconConfig = params.MainnetConfig() // init with Mainnet (we would override if needed)
+	GlobalBeaconConfig = params.MainnetConfig() // init with Mainnet (we would override if needed)
 )
 
 // configure global ForkVersion variables
@@ -39,7 +39,7 @@ func initNetworkForkVersions(beaconConfig *params.BeaconChainConfig) {
 	ElectraForkVersion = ForkVersion(beaconConfig.ElectraForkVersion)
 	FuluForkVersion = ForkVersion(beaconConfig.FuluForkVersion)
 
-	globalBeaconConfig = beaconConfig
+	GlobalBeaconConfig = beaconConfig
 }
 
 // GenesisConfig represents the Genesis configuration with the Merkle Root

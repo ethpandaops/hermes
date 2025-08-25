@@ -158,7 +158,7 @@ var cmdEthFlags = []cli.Flag{
 	&cli.IntFlag{
 		Name:        "devp2p.port",
 		EnvVars:     []string{"HERMES_ETH_DEVP2P_PORT"},
-		Usage:       "On which port should devp2p (disv5) listen",
+		Usage:       "On which port should devp2p (discv5) listen",
 		Value:       ethConfig.Devp2pPort,
 		Destination: &ethConfig.Devp2pPort,
 		DefaultText: "random",
@@ -173,7 +173,7 @@ var cmdEthFlags = []cli.Flag{
 	&cli.IntFlag{
 		Name:        "libp2p.port",
 		EnvVars:     []string{"HERMES_ETH_LIBP2P_PORT"},
-		Usage:       "On which port should libp2p (disv5) listen",
+		Usage:       "On which port should libp2p (discv5) listen",
 		Value:       ethConfig.Libp2pPort,
 		Destination: &ethConfig.Libp2pPort,
 		DefaultText: "random",
@@ -479,6 +479,7 @@ func cmdEthAction(c *cli.Context) error {
 
 // createSubnetConfigs creates subnet configurations based on the command line flags.
 func createSubnetConfigs() map[string]*eth.SubnetConfig {
+	// ensure that we don't subscribe to any of the topics by default
 	subnetConfigs := make(map[string]*eth.SubnetConfig)
 
 	// Configure attestation subnets if specified
@@ -570,7 +571,7 @@ func createAttestationSubnetConfig() *eth.SubnetConfig {
 		config.Start = ethConfig.SubnetAttestationStart
 		config.End = ethConfig.SubnetAttestationEnd
 	}
-
+	eth.GetSubscribedSubnets(config, eth.GlobalBeaconConfig.AttestationSubnetCount)
 	return config
 }
 
@@ -597,7 +598,7 @@ func createSyncCommitteeSubnetConfig() *eth.SubnetConfig {
 		config.Start = ethConfig.SubnetSyncCommitteeStart
 		config.End = ethConfig.SubnetSyncCommitteeEnd
 	}
-
+	eth.GetSubscribedSubnets(config, eth.GlobalBeaconConfig.SyncCommitteeSubnetCount)
 	return config
 }
 
@@ -624,7 +625,7 @@ func createBlobSidecarSubnetConfig() *eth.SubnetConfig {
 		config.Start = ethConfig.SubnetBlobSidecarStart
 		config.End = ethConfig.SubnetBlobSidecarEnd
 	}
-
+	eth.GetSubscribedSubnets(config, eth.GlobalBeaconConfig.BlobsidecarSubnetCountElectra)
 	return config
 }
 
