@@ -17,8 +17,8 @@ github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible/go
 github.com/Kubuxu/go-os-helper v0.0.1/go.mod h1:N8B+I7vPCT80IcP58r50u4+gEEcsZETFUpAzWW2ep1Y=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
-github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250820235730-c5135f699535 h1:kloXWuI4dwnvuGwUzGITWzipwGITJgSuBcD9TIUgOqk=
-github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250820235730-c5135f699535/go.mod h1:6UhEQHOVb5VCmJcTNNfAuByBtI/vnhDdXy2nvWXFzKU=
+github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250825143102-240cd1d0588a h1:GQe9Ca4Pq8N/vbctjAQ4TLJXs7qRLNWk4YAwFvDKndA=
+github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250825143102-240cd1d0588a/go.mod h1:IGaKrTBMkZO98GOZNBWof9mcnINwlczEJCCw+JotDEc=
 github.com/Shopify/sarama v1.19.0/go.mod h1:FVkBWblsNy7DGZRfXLU0O9RCGt5g3g3yEuWXgklEdEo=
 github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
 github.com/Stebalien/go-bitfield v0.0.1/go.mod h1:GNjFpasyUVkHMsfEOk8EFLJ9syQ6SI+XWrX9Wf2XH0s=
@@ -974,8 +974,8 @@ github.com/prysmaticlabs/fastssz v0.0.0-20241008181541-518c4ce73516 h1:xuVAdtz5S
 github.com/prysmaticlabs/fastssz v0.0.0-20241008181541-518c4ce73516/go.mod h1:h2OlIZD/M6wFvV3YMZbW16lFgh3Rsye00G44J2cwLyU=
 github.com/prysmaticlabs/go-bitfield v0.0.0-20240618144021-706c95b2dd15 h1:lC8kiphgdOBTcbTvo8MwkvpKjO0SlAgjv4xIK5FGJ94=
 github.com/prysmaticlabs/go-bitfield v0.0.0-20240618144021-706c95b2dd15/go.mod h1:8svFBIKKu31YriBG/pNizo9N0Jr9i5PQ+dFkxWg3x5k=
-github.com/prysmaticlabs/gohashtree v0.0.4-beta.0.20240624100937-73632381301b h1:VK7thFOnhxAZ/5aolr5Os4beiubuD08WiuiHyRqgwks=
-github.com/prysmaticlabs/gohashtree v0.0.4-beta.0.20240624100937-73632381301b/go.mod h1:HRuvtXLZ4WkaB1MItToVH2e8ZwKwZPY5/Rcby+CvvLY=
+github.com/prysmaticlabs/gohashtree v0.0.5-beta h1:ct41mg7HyIZd7uoSM/ud23f+3DxQG9tlMlQG+BVX23c=
+github.com/prysmaticlabs/gohashtree v0.0.5-beta/go.mod h1:HRuvtXLZ4WkaB1MItToVH2e8ZwKwZPY5/Rcby+CvvLY=
 github.com/prysmaticlabs/prombbolt v0.0.0-20210126082820-9b7adba6db7c h1:9PHRCuO/VN0s9k+RmLykho7AjDxblNYI5bYKed16NPU=
 github.com/prysmaticlabs/prombbolt v0.0.0-20210126082820-9b7adba6db7c/go.mod h1:ZRws458tYHS/Zs936OQ6oCrL+Ict5O4Xpwve1UQ6C9M=
 github.com/prysmaticlabs/protoc-gen-go-cast v0.0.0-20230228205207-28762a7b9294 h1:q9wE0ZZRdTUAAeyFP/w0SwBEnCqlVy2+on6X2/e+eAU=

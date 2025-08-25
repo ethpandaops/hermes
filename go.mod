@@ -2,10 +2,10 @@ module github.com/probe-lab/hermes
 
 go 1.24.5
 
-replace github.com/OffchainLabs/prysm/v6 => github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250820235730-c5135f699535
+replace github.com/OffchainLabs/prysm/v6 => github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250825143102-240cd1d0588a
 
 require (
-	github.com/OffchainLabs/prysm/v6 v6.0.4
+	github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250825143102-240cd1d0588a
 	github.com/aws/aws-sdk-go-v2 v1.37.2
 	github.com/aws/aws-sdk-go-v2/config v1.30.3
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.3
@@ -220,7 +220,7 @@ require (
 	github.com/prometheus/procfs v0.17.0 // indirect
 	github.com/prometheus/prom2json v1.4.2 // indirect
 	github.com/prometheus/prometheus v0.302.1 // indirect
-	github.com/prysmaticlabs/gohashtree v0.0.4-beta.0.20240624100937-73632381301b // indirect
+	github.com/prysmaticlabs/gohashtree v0.0.5-beta // indirect
 	github.com/prysmaticlabs/prombbolt v0.0.0-20210126082820-9b7adba6db7c // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.52.0 // indirect
