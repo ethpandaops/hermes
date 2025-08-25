@@ -69,7 +69,8 @@ func DeriveKnownNetworkConfig(ctx context.Context, network string) (*NetworkConf
 					{0x02, 0x00, 0x00, 0x64}: primitives.Epoch(385536),
 					{0x03, 0x00, 0x00, 0x64}: primitives.Epoch(648704),
 					{0x04, 0x00, 0x00, 0x64}: primitives.Epoch(889856),
-					{0x05, 0x00, 0x00, 0x64}: primitives.Epoch(18446744073709551615), // temporary
+					{0x05, 0x00, 0x00, 0x64}: primitives.Epoch(1337856),
+					{0x06, 0x00, 0x00, 0x64}: primitives.Epoch(18446744073709551615), // temporary
 				},
 				ForkVersionNames: map[[4]byte]string{
 					{0x00, 0x00, 0x00, 0x64}: "phase0",

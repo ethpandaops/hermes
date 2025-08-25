@@ -1,28 +1,41 @@
-package eth
+package op
 
 import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 
-	"github.com/OffchainLabs/prysm/v6/config/params"
-	pb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
-	"github.com/OffchainLabs/prysm/v6/time/slots"
 	"github.com/ethereum/go-ethereum/crypto/secp256k1"
+	elog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
-	"github.com/probe-lab/hermes/tele"
 	"github.com/thejerf/suture/v4"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/probe-lab/hermes/tele"
 )
+
+type DiscoveryConfig struct {
+	ChainID uint64
+	Addr    string
+	UDPPort int
+	TCPPort int
+	Seeds   []*enode.Node
+	Tracer  trace.Tracer
+	Meter   metric.Meter
+}
 
 // Discovery is a suture service that periodically queries the discv5 DHT
 // for random peers and publishes the discovered peers on the `out` channel.
@@ -32,7 +45,7 @@ type Discovery struct {
 	cfg  *DiscoveryConfig
 	pk   *ecdsa.PrivateKey
 	node *enode.LocalNode
-	out  chan *DiscoveredPeer
+	out  chan peer.AddrInfo
 
 	// Metrics
 	MeterDiscoveredPeers metric.Int64Counter
@@ -52,20 +65,17 @@ func NewDiscovery(privKey *ecdsa.PrivateKey, cfg *DiscoveryConfig) (*Discovery, 
 
 	localNode := enode.NewLocalNode(db, privKey)
 
+	opstackENREntry := &OpStackENRData{
+		chainID: cfg.ChainID,
+		version: 0,
+	}
+
 	localNode.Set(enr.IP(ip.String()))
 	localNode.Set(enr.UDP(cfg.UDPPort))
 	localNode.Set(enr.TCP(cfg.TCPPort))
-	localNode.Set(cfg.enrAttnetsEntry())
-	localNode.Set(cfg.enrSyncnetsEntry())
+	localNode.Set(opstackENREntry)
 	localNode.SetFallbackIP(ip)
 	localNode.SetFallbackUDP(cfg.TCPPort)
-
-	enrEth2Entry, err := cfg.enrEth2Entry()
-	if err != nil {
-		return nil, fmt.Errorf("build enr fork entry: %w", err)
-	}
-
-	localNode.Set(enrEth2Entry)
 
 	slog.Info("Initialized new enode",
 		"id", localNode.ID().String(),
@@ -78,7 +88,7 @@ func NewDiscovery(privKey *ecdsa.PrivateKey, cfg *DiscoveryConfig) (*Discovery, 
 		cfg:  cfg,
 		pk:   privKey,
 		node: localNode,
-		out:  make(chan *DiscoveredPeer),
+		out:  make(chan peer.AddrInfo),
 	}
 
 	d.MeterDiscoveredPeers, err = cfg.Meter.Int64Counter("discovered_peers", metric.WithDescription("Total number of discovered peers"))
@@ -93,12 +103,6 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 	slog.Info("Starting discv5 Discovery Service")
 	defer slog.Info("Stopped disv5 Discovery Service")
 	defer func() { err = terminateSupervisorTreeOnErr(err) }()
-
-	genesisTime := d.cfg.GenesisConfig.GenesisTime
-
-	currentSlot := slots.CurrentSlot(genesisTime)
-	currentEpoch := slots.ToEpoch(currentSlot)
-	digest := params.ForkDigest(currentEpoch)
 
 	ip := net.ParseIP(d.cfg.Addr)
 
@@ -127,15 +131,14 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to listen on %s:%d: %w", bindIP, d.cfg.UDPPort, err)
 	}
 	defer logDeferErr(conn.Close, "failed to close discovery UDP connection")
-
-	enodes, err := d.cfg.BootstrapNodes()
-	if err != nil {
-		return err
-	}
-
+	logger := elog.New()
+	elog.SetDefault(logger)
 	cfg := discover.Config{
-		PrivateKey: d.pk,
-		Bootnodes:  enodes,
+		PrivateKey:   d.pk,
+		Bootnodes:    d.cfg.Seeds,
+		Unhandled:    nil, // Not used in dv5
+		Log:          logger,
+		ValidSchemes: enode.ValidSchemes,
 	}
 
 	listener, err := discover.ListenV5(conn, d.node, cfg)
@@ -144,14 +147,29 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 	}
 	defer listener.Close()
 
-	iterator := listener.RandomNodes()
+	iterator := enode.Filter(listener.RandomNodes(), func(node *enode.Node) bool {
+		var dat OpStackENRData
+		if err := node.Load(&dat); err != nil {
+			return false
+		}
+		// check chain ID matches
+		if d.cfg.ChainID != dat.chainID {
+			return false
+		}
+
+		if dat.version != 0 {
+			return false
+		}
+
+		return true
+	})
 
 	go func() {
 		<-ctx.Done()
 		iterator.Close()
 	}()
 
-	slog.Info("Listen for discv5 peers...")
+	slog.Info("Looking for discv5 peers...")
 	defer iterator.Close()
 	defer close(d.out)
 	for {
@@ -170,28 +188,13 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 			return
 		}
 
+		slog.Info("New peer discovered")
+
 		// yes, we do
 		node := iterator.Node()
 
 		// Skip peer if it is only privately reachable
 		if node.IP().IsPrivate() {
-			continue
-		}
-		sszEncodedForkEntry := make([]byte, 16)
-		entry := enr.WithEntry(eth2EnrKey, &sszEncodedForkEntry)
-		if err = node.Record().Load(entry); err != nil {
-			// failed reading eth2 enr entry, likely because it doesn't exist
-			continue
-		}
-
-		forkEntry := &pb.ENRForkID{}
-		if err = forkEntry.UnmarshalSSZ(sszEncodedForkEntry); err != nil {
-			slog.Debug("failed unmarshalling eth2 enr entry", tele.LogAttrError(err))
-			continue
-		}
-
-		if !bytes.Equal(forkEntry.CurrentForkDigest, digest[:]) {
-			// irrelevant network
 			continue
 		}
 
@@ -206,7 +209,7 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 		d.MeterDiscoveredPeers.Add(ctx, 1)
 
 		select {
-		case d.out <- pi:
+		case d.out <- pi.AddrInfo:
 		case <-ctx.Done():
 			return nil
 		}
@@ -270,4 +273,45 @@ func NewDiscoveredPeer(node *enode.Node) (*DiscoveredPeer, error) {
 	}
 
 	return pi, nil
+}
+
+type OpStackENRData struct {
+	chainID uint64
+	version uint64
+}
+
+var _ enr.Entry = (*OpStackENRData)(nil)
+
+func (o *OpStackENRData) ENRKey() string {
+	return "opstack"
+}
+
+func (o *OpStackENRData) EncodeRLP(w io.Writer) error {
+	out := make([]byte, 2*binary.MaxVarintLen64)
+	offset := binary.PutUvarint(out, o.chainID)
+	offset += binary.PutUvarint(out[offset:], o.version)
+	out = out[:offset]
+	// encode as byte-string
+	return rlp.Encode(w, out)
+}
+
+func (o *OpStackENRData) DecodeRLP(s *rlp.Stream) error {
+	b, err := s.Bytes()
+	if err != nil {
+		return fmt.Errorf("failed to decode outer ENR entry: %w", err)
+	}
+	// We don't check the byte length: the below readers are limited, and the ENR itself has size limits.
+	// Future "opstack" entries may contain additional data, and will be tagged with a newer version etc.
+	r := bytes.NewReader(b)
+	chainID, err := binary.ReadUvarint(r)
+	if err != nil {
+		return fmt.Errorf("failed to read chain ID var int: %w", err)
+	}
+	version, err := binary.ReadUvarint(r)
+	if err != nil {
+		return fmt.Errorf("failed to read version var int: %w", err)
+	}
+	o.chainID = chainID
+	o.version = version
+	return nil
 }

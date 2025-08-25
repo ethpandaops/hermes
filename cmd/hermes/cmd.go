@@ -99,6 +99,8 @@ var app = &cli.App{
 	Before: rootBefore,
 	Commands: []*cli.Command{
 		cmdEth,
+		cmdFil,
+		cmdOp,
 		cmdBenchmark,
 	},
 	After: rootAfter,
@@ -117,7 +119,7 @@ var rootFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "log.level",
 		EnvVars:     []string{"HERMES_LOG_LEVEL"},
-		Usage:       "Sets an explicity logging level: debug, info, warn, error. Takes precedence over the verbose flag.",
+		Usage:       "Sets an explicitly logging level: debug, info, warn, error. Takes precedence over the verbose flag.",
 		Destination: &rootConfig.LogLevel,
 		Value:       rootConfig.LogLevel,
 		Category:    flagCategoryLogging,
@@ -197,7 +199,7 @@ var rootFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "data.stream.type",
 		EnvVars:     []string{"HERMES_DATA_STREAM_TYPE"},
-		Usage:       "Format where the traces will be submitted: logger, kinesis, or callback.",
+		Usage:       "Format where the traces will be submitted: logger, kinesis, noop, s3 or callback.",
 		Value:       rootConfig.DataStreamType,
 		Destination: &rootConfig.DataStreamType,
 		Category:    flagCategoryDataStream,
@@ -237,7 +239,7 @@ var rootFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "s3.bucket",
 		EnvVars:     []string{"HERMES_S3_BUCKET"},
-		Usage:       "name of the S3 bucket that will be used as reference to submit the traces",
+		Usage:       "Name of the S3 bucket that will be used as reference to submit the traces",
 		Value:       rootConfig.S3Bucket,
 		Destination: &rootConfig.S3Bucket,
 		Category:    flagCategoryDataStream,
@@ -245,7 +247,7 @@ var rootFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "s3.tag",
 		EnvVars:     []string{"HERMES_S3_TAG"},
-		Usage:       "tag within the S3 bucket that will be used as reference to submit the traces",
+		Usage:       "Tag within the S3 bucket that will be used as reference to submit the traces",
 		Value:       rootConfig.S3Tag,
 		Destination: &rootConfig.S3Tag,
 		Category:    flagCategoryDataStream,
@@ -253,7 +255,7 @@ var rootFlags = []cli.Flag{
 	&cli.IntFlag{
 		Name:        "s3.byte.limit",
 		EnvVars:     []string{"HERMES_S3_BYTE_LIMIT"},
-		Usage:       "Soft upper limite of bytes for the S3 dumps",
+		Usage:       "Soft upper limit of bytes for the S3 dumps",
 		Value:       rootConfig.S3ByteLimit,
 		Destination: &rootConfig.S3ByteLimit,
 		Category:    flagCategoryDataStream,
