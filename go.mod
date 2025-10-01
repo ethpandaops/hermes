@@ -1,19 +1,17 @@
 module github.com/probe-lab/hermes
 
-go 1.24.5
-
-replace github.com/OffchainLabs/prysm/v6 => github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250825143102-240cd1d0588a
+go 1.25.1
 
 require (
-	github.com/OffchainLabs/prysm/v6 v6.0.5-rc.1.0.20250825143102-240cd1d0588a
-	github.com/aws/aws-sdk-go-v2 v1.37.2
-	github.com/aws/aws-sdk-go-v2/config v1.30.3
-	github.com/aws/aws-sdk-go-v2/credentials v1.18.3
-	github.com/aws/aws-sdk-go-v2/service/kinesis v1.37.0
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.86.0
+	github.com/OffchainLabs/prysm/v6 v6.1.1
+	github.com/aws/aws-sdk-go-v2 v1.39.2
+	github.com/aws/aws-sdk-go-v2/config v1.31.12
+	github.com/aws/aws-sdk-go-v2/credentials v1.18.16
+	github.com/aws/aws-sdk-go-v2/service/kinesis v1.40.5
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.3
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/dennis-tra/go-kinesis v0.0.0-20240326083914-7acf5f8dc24e
-	github.com/ethereum/go-ethereum v1.15.9
+	github.com/ethereum/go-ethereum v1.16.4
 	github.com/ferranbt/fastssz v0.1.4
 	github.com/filecoin-project/go-f3 v0.8.4
 	github.com/filecoin-project/lotus v1.32.2
@@ -26,7 +24,7 @@ require (
 	github.com/libp2p/go-libp2p v0.42.0
 	github.com/libp2p/go-libp2p-kad-dht v0.33.1
 	github.com/libp2p/go-libp2p-mplex v0.10.0
-	github.com/libp2p/go-libp2p-pubsub v0.14.1
+	github.com/libp2p/go-libp2p-pubsub v0.14.2
 	github.com/lmittmann/tint v1.1.2
 	github.com/multiformats/go-multiaddr v0.16.0
 	github.com/parquet-go/parquet-go v0.25.1
@@ -56,20 +54,20 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/aristanetworks/goarista v0.0.0-20250801095011-c009ccb12f2a // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.0 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.2 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.2 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.2 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.1 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.9 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.9 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.9 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.3 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.8.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.27.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.32.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.36.0 // indirect
-	github.com/aws/smithy-go v1.22.5 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.8.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.29.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.38.6 // indirect
+	github.com/aws/smithy-go v1.23.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -80,6 +78,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/consensys/gnark-crypto v0.18.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
+	github.com/crate-crypto/go-eth-kzg v1.4.0 // indirect
 	github.com/crate-crypto/go-ipa v0.0.0-20240724233137-53bbb0ceb27a // indirect
 	github.com/crate-crypto/go-kzg-4844 v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -88,8 +87,7 @@ require (
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/dot v1.9.0 // indirect
-	github.com/ethereum/c-kzg-4844 v1.0.0 // indirect
-	github.com/ethereum/c-kzg-4844/v2 v2.1.1 // indirect
+	github.com/ethereum/c-kzg-4844/v2 v2.1.3 // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/filecoin-project/go-address v1.2.0 // indirect
@@ -233,7 +231,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/afero v1.14.0 // indirect
-	github.com/supranational/blst v0.3.15 // indirect
+	github.com/supranational/blst v0.3.16-0.20250831170142-f48500c1fdbe // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect
 	github.com/thomaso-mirodin/intmath v0.0.0-20160323211736-5dc6d854e46e // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
@@ -264,7 +262,7 @@ require (
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.34.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/term v0.33.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
 	golang.org/x/tools v0.35.0 // indirect
