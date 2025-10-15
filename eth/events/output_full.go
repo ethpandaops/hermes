@@ -111,6 +111,22 @@ type TraceEventDataColumnSidecar struct {
 	DataColumnSidecar *ethtypes.DataColumnSidecar
 }
 
+// TraceEventCustodyProbe represents a data column custody probe event
+type TraceEventCustodyProbe struct {
+	host.TraceEventPayloadMetaData
+	Slot              uint64   `json:"slot"`
+	ColumnIndex       uint64   `json:"column_index"`
+	ExpectedCustody   bool     `json:"expected_custody"`
+	Success           bool     `json:"success"`
+	ResponseTimeMs    int64    `json:"response_time_ms"`
+	ReceivedData      bool     `json:"received_data"`
+	ValidKZG          bool     `json:"valid_kzg"`
+	Error             string   `json:"error,omitempty"`
+	PeerUserAgent     string   `json:"peer_user_agent"`
+	PeerProtocols     []string `json:"peer_protocols"`
+	CustodyGroupCount uint64   `json:"custody_group_count"`
+}
+
 // FullOutput is a renderer for full output.
 type FullOutput struct {
 	encoder encoder.NetworkEncoding
@@ -510,4 +526,103 @@ func (t *FullOutput) renderDataColumnSidecar(
 		},
 		DataColumnSidecar: sidecar,
 	}, nil
+}
+
+func (t *FullOutput) renderCustodyProbe(
+	msg *host.TraceEvent,
+) (*TraceEventCustodyProbe, error) {
+	payload, ok := msg.Payload.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid payload type")
+	}
+
+	return &TraceEventCustodyProbe{
+		TraceEventPayloadMetaData: host.TraceEventPayloadMetaData{
+			PeerID:  msg.PeerID.String(),
+			Topic:   msg.Topic,
+			MsgID:   "", // Not applicable
+			MsgSize: 0,  // Not applicable
+		},
+		Slot:              getUint64(payload, "slot"),
+		ColumnIndex:       getUint64(payload, "column_index"),
+		ExpectedCustody:   getBool(payload, "expected_custody"),
+		Success:           getBool(payload, "success"),
+		ResponseTimeMs:    getInt64(payload, "response_time_ms"),
+		ReceivedData:      getBool(payload, "received_data"),
+		ValidKZG:          getBool(payload, "valid_kzg"),
+		Error:             getString(payload, "error"),
+		PeerUserAgent:     getString(payload, "peer_user_agent"),
+		PeerProtocols:     getStringSlice(payload, "peer_protocols"),
+		CustodyGroupCount: getUint64(payload, "custody_group_count"),
+	}, nil
+}
+
+// Helper functions for extracting typed values from map[string]interface{}
+
+func getUint64(m map[string]interface{}, key string) uint64 {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case uint64:
+			return v
+		case int:
+			return uint64(v)
+		case int64:
+			return uint64(v)
+		case float64:
+			return uint64(v)
+		}
+	}
+	return 0
+}
+
+func getBool(m map[string]interface{}, key string) bool {
+	if val, ok := m[key]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
+func getInt64(m map[string]interface{}, key string) int64 {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case int64:
+			return v
+		case int:
+			return int64(v)
+		case uint64:
+			return int64(v)
+		case float64:
+			return int64(v)
+		}
+	}
+	return 0
+}
+
+func getString(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func getStringSlice(m map[string]interface{}, key string) []string {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case []string:
+			return v
+		case []interface{}:
+			result := make([]string, 0, len(v))
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					result = append(result, s)
+				}
+			}
+			return result
+		}
+	}
+	return []string{}
 }
