@@ -2,11 +2,14 @@ package events
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p/encoder"
 	ethtypes "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/probe-lab/hermes/host"
 	ssz "github.com/prysmaticlabs/fastssz"
 )
@@ -109,6 +112,20 @@ type TraceEventAttesterSlashing struct {
 type TraceEventDataColumnSidecar struct {
 	host.TraceEventPayloadMetaData
 	DataColumnSidecar *ethtypes.DataColumnSidecar
+}
+
+// TraceEventCustodyProbe represents a data column custody probe event
+type TraceEventCustodyProbe struct {
+	host.TraceEventPayloadMetaData
+	PeerID     *peer.ID      `json:"peer_id,omitempty"`
+	Epoch      uint64        `json:"epoch"`
+	Slot       uint64        `json:"slot"`
+	BlockHash  string        `json:"block_hash"`
+	Column     uint64        `json:"column_id"`
+	Result     string        `json:"result,omitempty"`
+	Duration   time.Duration `json:"duration,omitempty"`
+	ColumnSize int           `json:"column_size,omitempty"`
+	Error      string        `json:"error,omitempty"`
 }
 
 // FullOutput is a renderer for full output.
@@ -510,4 +527,81 @@ func (t *FullOutput) renderDataColumnSidecar(
 		},
 		DataColumnSidecar: sidecar,
 	}, nil
+}
+
+func (t *FullOutput) renderCustodyProbe(
+	msg *host.TraceEvent,
+) (*TraceEventCustodyProbe, error) {
+	// TODO: implement this once dasmon package is ready
+	return nil, errors.New("not implemented")
+}
+
+// Helper functions for extracting typed values from map[string]interface{}
+
+func getUint64(m map[string]interface{}, key string) uint64 {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case uint64:
+			return v
+		case int:
+			return uint64(v)
+		case int64:
+			return uint64(v)
+		case float64:
+			return uint64(v)
+		}
+	}
+	return 0
+}
+
+func getBool(m map[string]interface{}, key string) bool {
+	if val, ok := m[key]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
+func getInt64(m map[string]interface{}, key string) int64 {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case int64:
+			return v
+		case int:
+			return int64(v)
+		case uint64:
+			return int64(v)
+		case float64:
+			return int64(v)
+		}
+	}
+	return 0
+}
+
+func getString(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func getStringSlice(m map[string]interface{}, key string) []string {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case []string:
+			return v
+		case []interface{}:
+			result := make([]string, 0, len(v))
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					result = append(result, s)
+				}
+			}
+			return result
+		}
+	}
+	return []string{}
 }

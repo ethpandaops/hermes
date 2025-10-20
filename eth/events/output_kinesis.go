@@ -493,3 +493,22 @@ func (k *KinesisOutput) renderDataColumnSidecar(
 		"ParentRoot": hexutil.Encode(sidecar.GetSignedBlockHeader().GetHeader().GetParentRoot()),
 	}, nil
 }
+
+func (k *KinesisOutput) renderCustodyProbe(
+	msg *host.TraceEvent,
+) (map[string]any, error) {
+	payload, ok := msg.Payload.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid payload type")
+	}
+
+	return map[string]any{
+		"PeerID":          msg.PeerID.String(),
+		"Topic":           msg.Topic,
+		"Slot":            payload["slot"],
+		"ColumnIndex":     payload["column_index"],
+		"Success":         payload["success"],
+		"ResponseTimeMs":  payload["response_time_ms"],
+		"ExpectedCustody": payload["expected_custody"],
+	}, nil
+}
