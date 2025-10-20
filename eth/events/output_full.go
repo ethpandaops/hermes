@@ -4,10 +4,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p/encoder"
 	ethtypes "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/probe-lab/hermes/host"
 	ssz "github.com/prysmaticlabs/fastssz"
 )
@@ -115,17 +117,15 @@ type TraceEventDataColumnSidecar struct {
 // TraceEventCustodyProbe represents a data column custody probe event
 type TraceEventCustodyProbe struct {
 	host.TraceEventPayloadMetaData
-	Slot              uint64   `json:"slot"`
-	ColumnIndex       uint64   `json:"column_index"`
-	ExpectedCustody   bool     `json:"expected_custody"`
-	Success           bool     `json:"success"`
-	ResponseTimeMs    int64    `json:"response_time_ms"`
-	ReceivedData      bool     `json:"received_data"`
-	ValidKZG          bool     `json:"valid_kzg"`
-	Error             string   `json:"error,omitempty"`
-	PeerUserAgent     string   `json:"peer_user_agent"`
-	PeerProtocols     []string `json:"peer_protocols"`
-	CustodyGroupCount uint64   `json:"custody_group_count"`
+	PeerID     *peer.ID      `json:"peer_id,omitempty"`
+	Epoch      uint64        `json:"epoch"`
+	Slot       uint64        `json:"slot"`
+	BlockHash  string        `json:"block_hash"`
+	Column     uint64        `json:"column_id"`
+	Result     string        `json:"result,omitempty"`
+	Duration   time.Duration `json:"duration,omitempty"`
+	ColumnSize int           `json:"column_size,omitempty"`
+	Error      string        `json:"error,omitempty"`
 }
 
 // FullOutput is a renderer for full output.
