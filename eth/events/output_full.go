@@ -2,6 +2,7 @@ package events
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p/encoder"
@@ -531,30 +532,8 @@ func (t *FullOutput) renderDataColumnSidecar(
 func (t *FullOutput) renderCustodyProbe(
 	msg *host.TraceEvent,
 ) (*TraceEventCustodyProbe, error) {
-	payload, ok := msg.Payload.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid payload type")
-	}
-
-	return &TraceEventCustodyProbe{
-		TraceEventPayloadMetaData: host.TraceEventPayloadMetaData{
-			PeerID:  msg.PeerID.String(),
-			Topic:   msg.Topic,
-			MsgID:   "", // Not applicable
-			MsgSize: 0,  // Not applicable
-		},
-		Slot:              getUint64(payload, "slot"),
-		ColumnIndex:       getUint64(payload, "column_index"),
-		ExpectedCustody:   getBool(payload, "expected_custody"),
-		Success:           getBool(payload, "success"),
-		ResponseTimeMs:    getInt64(payload, "response_time_ms"),
-		ReceivedData:      getBool(payload, "received_data"),
-		ValidKZG:          getBool(payload, "valid_kzg"),
-		Error:             getString(payload, "error"),
-		PeerUserAgent:     getString(payload, "peer_user_agent"),
-		PeerProtocols:     getStringSlice(payload, "peer_protocols"),
-		CustodyGroupCount: getUint64(payload, "custody_group_count"),
-	}, nil
+	// TODO: implement this once dasmon package is ready
+	return nil, errors.New("not implemented")
 }
 
 // Helper functions for extracting typed values from map[string]interface{}
