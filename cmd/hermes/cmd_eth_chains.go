@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"math"
 
-	"github.com/OffchainLabs/prysm/v6/config/params"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	"github.com/OffchainLabs/prysm/v7/consensus-types/primitives"
 	"github.com/urfave/cli/v2"
 
 	"github.com/probe-lab/hermes/eth"
