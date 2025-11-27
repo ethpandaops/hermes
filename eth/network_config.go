@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OffchainLabs/prysm/v6/config/params"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	"github.com/OffchainLabs/prysm/v7/consensus-types/primitives"
 )
 
 var GnosisName = "gnosis"
@@ -62,6 +62,7 @@ func DeriveKnownNetworkConfig(ctx context.Context, network string) (*NetworkConf
 				CapellaForkVersion:   []byte{0x03, 0x00, 0x00, 0x64},
 				DenebForkVersion:     []byte{0x04, 0x00, 0x00, 0x64},
 				ElectraForkVersion:   []byte{0x05, 0x00, 0x00, 0x64},
+				FuluForkVersion:      []byte{0x06, 0x00, 0x00, 0x64},
 				ForkVersionSchedule: map[[4]byte]primitives.Epoch{
 					{0x00, 0x00, 0x00, 0x64}: primitives.Epoch(0),
 					{0x01, 0x00, 0x00, 0x64}: primitives.Epoch(512),

@@ -35,6 +35,8 @@ const (
 	EventTypeJoinLeaveTopic
 	// Libp2p Event
 	EventTypeConnectDisconnectPeer
+	// Custody Probe
+	EventTypeCustodyProbe
 	// TODO: Ethereum related traces like Status/Metadata req/resp or pings
 	// will have to be part of the generic type
 	// no need to add Ethereum-relate stuff on the generic host package
@@ -68,6 +70,8 @@ func (e EventType) String() string {
 		return "join_leave"
 	case EventTypeConnectDisconnectPeer:
 		return "connect_disconnect"
+	case EventTypeCustodyProbe:
+		return "custody_probe"
 	default:
 		return "unknown"
 	}
@@ -86,6 +90,7 @@ var allEventTypes = []EventType{
 	EventTypeMsgArrivals,
 	EventTypeJoinLeaveTopic,
 	EventTypeConnectDisconnectPeer,
+	EventTypeCustodyProbe,
 }
 
 type EventSubType int8

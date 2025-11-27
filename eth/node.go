@@ -8,8 +8,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p"
-	eth "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	eth "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/time/slots"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	gk "github.com/dennis-tra/go-kinesis"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -204,7 +206,37 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("new p2p server: %w", err)
 	}
 
-	// initialize the pubsub topic handlers
+	// initialize the custom Prysm client to communicate with its API
+	pryClient, err := NewPrysmClientWithTLS(cfg.PrysmHost, cfg.PrysmPortHTTP, cfg.PrysmPortGRPC, cfg.PrysmUseTLS, cfg.DialTimeout, cfg.GenesisConfig)
+	if err != nil {
+		return nil, fmt.Errorf("new prysm client: %w", err)
+	}
+
+	// Fetch and set the BlobSchedule from Prysm for correct BPO fork digest calculation
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := pryClient.FetchAndSetBlobSchedule(ctx); err != nil {
+		// Continue even if this fails, as the network might not have BPO enabled
+		slog.Warn("Failed to fetch BlobSchedule from Prysm", tele.LogAttrError(err))
+	}
+
+	// Recalculate fork digest after loading BlobSchedule
+	currentSlot := slots.CurrentSlot(cfg.GenesisConfig.GenesisTime)
+	currentEpoch := slots.ToEpoch(currentSlot)
+	cfg.ForkDigest = params.ForkDigest(currentEpoch)
+
+	// check if Prysm is valid
+	onNetwork, err := pryClient.isOnNetwork(ctx, cfg.ForkDigest)
+	if err != nil {
+		return nil, fmt.Errorf("prysm client: %w", err)
+	}
+	if !onNetwork {
+		return nil, fmt.Errorf("prysm client not in correct fork_digest")
+	}
+
+	// Init the pubsub topic handlers AFTER recalculating fork digest
+	// If we don't do this, we'll be subscribing under the incorrect fork
+	// digest, and nobody wants that.
 	pubSubConfig := &PubSubConfig{
 		Topics:         cfg.getDesiredFullTopics(cfg.GossipSubMessageEncoder),
 		ForkVersion:    cfg.ForkVersion,
@@ -217,22 +249,6 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 	pubSub, err := NewPubSub(h, pubSubConfig)
 	if err != nil {
 		return nil, fmt.Errorf("new PubSub service: %w", err)
-	}
-
-	// initialize the custom Prysm client to communicate with its API
-	pryClient, err := NewPrysmClientWithTLS(cfg.PrysmHost, cfg.PrysmPortHTTP, cfg.PrysmPortGRPC, cfg.PrysmUseTLS, cfg.DialTimeout, cfg.GenesisConfig)
-	if err != nil {
-		return nil, fmt.Errorf("new prysm client: %w", err)
-	}
-	// check if Prysm is valid
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	onNetwork, err := pryClient.isOnNetwork(ctx, cfg.ForkDigest)
-	if err != nil {
-		return nil, fmt.Errorf("prysm client: %w", err)
-	}
-	if !onNetwork {
-		return nil, fmt.Errorf("prysm client not in correct fork_digest")
 	}
 
 	// finally, initialize hermes node
@@ -397,12 +413,13 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("get finalized finality checkpoints: %w", err)
 	}
 
-	status := &eth.Status{
-		ForkDigest:     n.cfg.ForkDigest[:],
-		FinalizedRoot:  chainHead.FinalizedBlockRoot,
-		FinalizedEpoch: chainHead.FinalizedEpoch,
-		HeadRoot:       chainHead.HeadBlockRoot,
-		HeadSlot:       chainHead.HeadSlot,
+	status := &eth.StatusV2{
+		ForkDigest:            n.cfg.ForkDigest[:],
+		FinalizedRoot:         chainHead.FinalizedBlockRoot,
+		FinalizedEpoch:        chainHead.FinalizedEpoch,
+		HeadRoot:              chainHead.HeadBlockRoot,
+		HeadSlot:              chainHead.HeadSlot,
+		EarliestAvailableSlot: 0, // TODO: This should be calculated based on data availability? Seems fine for hermes at the moment though.
 	}
 	n.reqResp.SetStatus(status)
 

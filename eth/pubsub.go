@@ -7,21 +7,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p"
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p/encoder"
-	ethtypes "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/encoder"
+	ethtypes "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	pubsubpb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ssz "github.com/prysmaticlabs/fastssz"
 	"github.com/thejerf/suture/v4"
 
+	"github.com/probe-lab/hermes/eth/events"
 	"github.com/probe-lab/hermes/host"
 	"github.com/probe-lab/hermes/tele"
 )
 
 const eventTypeHandleMessage = "HANDLE_MESSAGE"
 
+// PubSubConfig holds the configuration for pubsub event processing
 type PubSubConfig struct {
 	Topics         []string
 	ForkVersion    ForkVersion
@@ -67,10 +69,10 @@ func NewPubSub(h *host.Host, cfg *PubSubConfig) (*PubSub, error) {
 
 	switch cfg.DataStream.OutputType() {
 	case host.DataStreamOutputTypeFull:
-		dsr = NewFullOutput(cfg)
+		dsr = events.NewFullOutput(cfg.Encoder)
 	// TODO: If wanted, add a new S3ParquetOutput
 	default:
-		dsr = NewKinesisOutput(cfg)
+		dsr = events.NewKinesisOutput(cfg.Encoder, cfg.GenesisTime, cfg.SecondsPerSlot)
 	}
 
 	return &PubSub{
@@ -88,6 +90,7 @@ func (p *PubSub) Serve(ctx context.Context) error {
 	supervisor := suture.NewSimple("pubsub")
 
 	for _, topicName := range p.cfg.Topics {
+		slog.Info("Joining pubsub topic", "topic", topicName)
 		topic, err := p.gs.Join(topicName)
 		if err != nil {
 			return fmt.Errorf("join pubsub topic %s: %w", topicName, err)
@@ -137,6 +140,8 @@ func (p *PubSub) mapPubSubTopicWithHandlers(topic string) host.TopicHandler {
 		return p.handleBlsToExecutionChangeMessage
 	case strings.Contains(topic, p2p.GossipBlobSidecarMessage):
 		return p.handleBlobSidecar
+	case strings.Contains(topic, p2p.GossipDataColumnSidecarMessage):
+		return p.handleDataColumnSidecar
 	default:
 		return p.host.TracedTopicHandler(host.NoopHandler)
 	}
@@ -184,8 +189,10 @@ func (p *PubSub) handleBeaconBlock(ctx context.Context, msg *pubsub.Message) err
 		block = &ethtypes.SignedBeaconBlockDeneb{}
 	case ElectraForkVersion:
 		block = &ethtypes.SignedBeaconBlockElectra{}
+	case FuluForkVersion:
+		block = &ethtypes.SignedBeaconBlockFulu{}
 	default:
-		return fmt.Errorf("handleBeaconBlock(): unrecognized fork-version: %s", p.cfg.ForkVersion.String())
+		return fmt.Errorf("handleBeaconBlock(): unrecognized fork-version: %x", p.cfg.ForkVersion)
 	}
 
 	evt, err = p.dsr.RenderPayload(evt, msg, block)
@@ -222,10 +229,12 @@ func (p *PubSub) handleAttestation(ctx context.Context, msg *pubsub.Message) err
 	)
 
 	switch p.cfg.ForkVersion {
-	case ElectraForkVersion:
+	case Phase0ForkVersion, AltairForkVersion, BellatrixForkVersion, CapellaForkVersion, DenebForkVersion:
+		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.Attestation{})
+	case ElectraForkVersion, FuluForkVersion:
 		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SingleAttestation{})
 	default:
-		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.Attestation{})
+		return fmt.Errorf("handleAttestation(): unrecognized fork-version: %x", p.cfg.ForkVersion)
 	}
 
 	if err != nil {
@@ -261,10 +270,12 @@ func (p *PubSub) handleAggregateAndProof(ctx context.Context, msg *pubsub.Messag
 	)
 
 	switch p.cfg.ForkVersion {
-	case ElectraForkVersion:
+	case Phase0ForkVersion, AltairForkVersion, BellatrixForkVersion, CapellaForkVersion, DenebForkVersion:
+		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProof{})
+	case ElectraForkVersion, FuluForkVersion:
 		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProofElectra{})
 	default:
-		evt, err = p.dsr.RenderPayload(evt, msg, &ethtypes.SignedAggregateAttestationAndProof{})
+		return fmt.Errorf("handleAggregateAndProof(): unrecognized fork-version: %x", p.cfg.ForkVersion)
 	}
 
 	if err != nil {
@@ -499,7 +510,7 @@ func (p *PubSub) handleBlobSidecar(ctx context.Context, msg *pubsub.Message) err
 	)
 
 	switch p.cfg.ForkVersion {
-	case DenebForkVersion, ElectraForkVersion:
+	case DenebForkVersion, ElectraForkVersion, FuluForkVersion:
 		blob := ethtypes.BlobSidecar{}
 
 		evt, err = p.dsr.RenderPayload(evt, msg, &blob)
@@ -518,6 +529,41 @@ func (p *PubSub) handleBlobSidecar(ctx context.Context, msg *pubsub.Message) err
 		}
 	default:
 		return fmt.Errorf("non recognized fork-version: %d", p.cfg.ForkVersion[:])
+	}
+
+	return nil
+}
+
+func (p *PubSub) handleDataColumnSidecar(ctx context.Context, msg *pubsub.Message) error {
+	if msg == nil || msg.Topic == nil || *msg.Topic == "" {
+		return fmt.Errorf("handleDataColumnSidecar(): nil message or topic")
+	}
+
+	var (
+		err error
+		evt = &host.TraceEvent{
+			Type:      eventTypeHandleMessage,
+			Topic:     msg.GetTopic(),
+			PeerID:    p.host.ID(),
+			Timestamp: time.Now(),
+		}
+	)
+
+	sidecar := ethtypes.DataColumnSidecar{}
+
+	evt, err = p.dsr.RenderPayload(evt, msg, &sidecar)
+	if err != nil {
+		slog.Warn(
+			"failed rendering topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
+
+		return nil
+	}
+
+	if err := p.cfg.DataStream.PutRecord(ctx, evt); err != nil {
+		slog.Warn(
+			"failed putting topic handler event", "topic", msg.GetTopic(), "err", tele.LogAttrError(err),
+		)
 	}
 
 	return nil

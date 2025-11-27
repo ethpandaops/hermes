@@ -1,11 +1,12 @@
-package eth
+package events
 
 import (
 	"encoding/hex"
 	"fmt"
 	"time"
 
-	ethtypes "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/encoder"
+	ethtypes "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/probe-lab/hermes/host"
@@ -14,23 +15,25 @@ import (
 
 // KinesisOutput is a renderer for Kinesis output.
 type KinesisOutput struct {
-	cfg *PubSubConfig
+	encoder        encoder.NetworkEncoding
+	genesisTime    time.Time
+	secondsPerSlot time.Duration
 }
 
 var _ host.DataStreamRenderer = (*KinesisOutput)(nil)
 
 // NewKinesisOutput creates a new instance of KinesisOutput.
-func NewKinesisOutput(cfg *PubSubConfig) host.DataStreamRenderer {
-	return &KinesisOutput{cfg: cfg}
+func NewKinesisOutput(enc encoder.NetworkEncoding, genesisTime time.Time, secondsPerSlot time.Duration) host.DataStreamRenderer {
+	return &KinesisOutput{encoder: enc, genesisTime: genesisTime, secondsPerSlot: secondsPerSlot}
 }
 
 // RenderPayload renders message into the destination.
 func (k *KinesisOutput) RenderPayload(evt *host.TraceEvent, msg *pubsub.Message, dst ssz.Unmarshaler) (*host.TraceEvent, error) {
-	if k.cfg.Encoder == nil {
+	if k.encoder == nil {
 		return nil, fmt.Errorf("no network encoding provided to kinenis output renderer")
 	}
 
-	if err := k.cfg.Encoder.DecodeGossip(msg.Data, dst); err != nil {
+	if err := k.encoder.DecodeGossip(msg.Data, dst); err != nil {
 		return nil, fmt.Errorf("decode gossip message: %w", err)
 	}
 
@@ -52,6 +55,8 @@ func (k *KinesisOutput) RenderPayload(evt *host.TraceEvent, msg *pubsub.Message,
 		payload, err = k.renderDenebBlock(msg, d)
 	case *ethtypes.SignedBeaconBlockElectra:
 		payload, err = k.renderElectraBlock(msg, d)
+	case *ethtypes.SignedBeaconBlockFulu:
+		payload, err = k.renderFuluBlock(msg, d)
 	case *ethtypes.Attestation:
 		payload, err = k.renderAttestation(msg, d)
 	case *ethtypes.AttestationElectra:
@@ -73,6 +78,8 @@ func (k *KinesisOutput) RenderPayload(evt *host.TraceEvent, msg *pubsub.Message,
 		payload, err = k.renderBLSToExecutionChange(msg, d)
 	case *ethtypes.BlobSidecar:
 		payload, err = k.renderBlobSidecar(msg, d)
+	case *ethtypes.DataColumnSidecar:
+		payload, err = k.renderDataColumnSidecar(msg, d)
 	case *ethtypes.ProposerSlashing:
 		payload, err = k.renderProposerSlashing(msg, d)
 	case *ethtypes.AttesterSlashing:
@@ -108,7 +115,7 @@ func (k *KinesisOutput) renderPhase0Block(
 		"Slot":       block.GetBlock().GetSlot(),
 		"Root":       root,
 		"ValIdx":     block.GetBlock().GetProposerIndex(),
-		"TimeInSlot": k.cfg.GenesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.cfg.SecondsPerSlot),
+		"TimeInSlot": k.genesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.secondsPerSlot),
 	}, nil
 }
 
@@ -130,7 +137,7 @@ func (k *KinesisOutput) renderAltairBlock(
 		"Slot":       block.GetBlock().GetSlot(),
 		"Root":       root,
 		"ValIdx":     block.GetBlock().GetProposerIndex(),
-		"TimeInSlot": k.cfg.GenesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.cfg.SecondsPerSlot),
+		"TimeInSlot": k.genesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.secondsPerSlot),
 	}, nil
 }
 
@@ -152,7 +159,7 @@ func (k *KinesisOutput) renderBellatrixBlock(
 		"Slot":       block.GetBlock().GetSlot(),
 		"Root":       root,
 		"ValIdx":     block.GetBlock().GetProposerIndex(),
-		"TimeInSlot": k.cfg.GenesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.cfg.SecondsPerSlot),
+		"TimeInSlot": k.genesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.secondsPerSlot),
 	}, nil
 }
 
@@ -174,7 +181,7 @@ func (k *KinesisOutput) renderCapellaBlock(
 		"Slot":       block.GetBlock().GetSlot(),
 		"Root":       root,
 		"ValIdx":     block.GetBlock().GetProposerIndex(),
-		"TimeInSlot": k.cfg.GenesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.cfg.SecondsPerSlot),
+		"TimeInSlot": k.genesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.secondsPerSlot),
 	}, nil
 }
 
@@ -196,7 +203,7 @@ func (k *KinesisOutput) renderDenebBlock(
 		"Slot":       block.GetBlock().GetSlot(),
 		"Root":       root,
 		"ValIdx":     block.GetBlock().GetProposerIndex(),
-		"TimeInSlot": k.cfg.GenesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.cfg.SecondsPerSlot),
+		"TimeInSlot": k.genesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.secondsPerSlot),
 	}, nil
 }
 
@@ -218,7 +225,29 @@ func (k *KinesisOutput) renderElectraBlock(
 		"Slot":       block.GetBlock().GetSlot(),
 		"Root":       root,
 		"ValIdx":     block.GetBlock().GetProposerIndex(),
-		"TimeInSlot": k.cfg.GenesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.cfg.SecondsPerSlot),
+		"TimeInSlot": k.genesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.secondsPerSlot),
+	}, nil
+}
+
+func (k *KinesisOutput) renderFuluBlock(
+	msg *pubsub.Message,
+	block *ethtypes.SignedBeaconBlockFulu,
+) (map[string]any, error) {
+	root, err := block.GetBlock().HashTreeRoot()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine block hash tree root: %w", err)
+	}
+
+	return map[string]any{
+		"PeerID":     msg.ReceivedFrom,
+		"Topic":      msg.GetTopic(),
+		"Seq":        hex.EncodeToString(msg.GetSeqno()),
+		"MsgID":      hex.EncodeToString([]byte(msg.ID)),
+		"MsgSize":    len(msg.Data),
+		"Slot":       block.GetBlock().GetSlot(),
+		"Root":       root,
+		"ValIdx":     block.GetBlock().GetProposerIndex(),
+		"TimeInSlot": k.genesisTime.Add(time.Duration(block.GetBlock().GetSlot()) * k.secondsPerSlot),
 	}, nil
 }
 
@@ -443,5 +472,43 @@ func (k *KinesisOutput) renderAttesterSlashing(
 		"Seq":          hex.EncodeToString(msg.GetSeqno()),
 		"Att1_indices": as.GetAttestation_1().GetAttestingIndices(),
 		"Att2_indices": as.GetAttestation_2().GetAttestingIndices(),
+	}, nil
+}
+
+func (k *KinesisOutput) renderDataColumnSidecar(
+	msg *pubsub.Message,
+	sidecar *ethtypes.DataColumnSidecar,
+) (map[string]any, error) {
+	return map[string]any{
+		"PeerID":     msg.ReceivedFrom,
+		"MsgID":      hex.EncodeToString([]byte(msg.ID)),
+		"MsgSize":    len(msg.Data),
+		"Topic":      msg.GetTopic(),
+		"Seq":        hex.EncodeToString(msg.GetSeqno()),
+		"Slot":       sidecar.GetSignedBlockHeader().GetHeader().GetSlot(),
+		"ValIdx":     sidecar.GetSignedBlockHeader().GetHeader().GetProposerIndex(),
+		"Index":      sidecar.GetIndex(),
+		"StateRoot":  hexutil.Encode(sidecar.GetSignedBlockHeader().GetHeader().GetStateRoot()),
+		"BodyRoot":   hexutil.Encode(sidecar.GetSignedBlockHeader().GetHeader().GetBodyRoot()),
+		"ParentRoot": hexutil.Encode(sidecar.GetSignedBlockHeader().GetHeader().GetParentRoot()),
+	}, nil
+}
+
+func (k *KinesisOutput) renderCustodyProbe(
+	msg *host.TraceEvent,
+) (map[string]any, error) {
+	payload, ok := msg.Payload.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid payload type")
+	}
+
+	return map[string]any{
+		"PeerID":          msg.PeerID.String(),
+		"Topic":           msg.Topic,
+		"Slot":            payload["slot"],
+		"ColumnIndex":     payload["column_index"],
+		"Success":         payload["success"],
+		"ResponseTimeMs":  payload["response_time_ms"],
+		"ExpectedCustody": payload["expected_custody"],
 	}, nil
 }

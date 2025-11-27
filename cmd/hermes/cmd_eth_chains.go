@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"math"
 
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/core/signing"
-	"github.com/OffchainLabs/prysm/v6/config/params"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	"github.com/OffchainLabs/prysm/v7/consensus-types/primitives"
 	"github.com/urfave/cli/v2"
 
 	"github.com/probe-lab/hermes/eth"
@@ -27,6 +27,15 @@ func cmdEthChainsAction(c *cli.Context) error {
 		eth.GnosisName,
 	}
 
+	// Save the original config to restore later
+	originalBeaconConfig := params.BeaconConfig().Copy()
+	originalNetworkConfig := params.BeaconNetworkConfig().Copy()
+	defer func() {
+		// Restore original config when done
+		params.OverrideBeaconConfig(originalBeaconConfig)
+		params.OverrideBeaconNetworkConfig(originalNetworkConfig)
+	}()
+
 	slog.Info("Supported chains:")
 	for _, chain := range chains {
 		config, err := eth.DeriveKnownNetworkConfig(c.Context, chain)
@@ -35,6 +44,10 @@ func cmdEthChainsAction(c *cli.Context) error {
 		}
 		slog.Info(chain)
 
+		// Override params config for this network to get correct fork digests
+		params.OverrideBeaconConfig(config.Beacon)
+		params.OverrideBeaconNetworkConfig(config.Network)
+
 		forkVersions := [][]byte{
 			config.Beacon.GenesisForkVersion,
 			config.Beacon.AltairForkVersion,
@@ -42,6 +55,7 @@ func cmdEthChainsAction(c *cli.Context) error {
 			config.Beacon.CapellaForkVersion,
 			config.Beacon.DenebForkVersion,
 			config.Beacon.ElectraForkVersion,
+			config.Beacon.FuluForkVersion,
 		}
 
 		for _, forkVersion := range forkVersions {
@@ -59,10 +73,9 @@ func cmdEthChainsAction(c *cli.Context) error {
 				continue
 			}
 
-			digest, err := signing.ComputeForkDigest(forkVersion, config.Genesis.GenesisValidatorRoot)
-			if err != nil {
-				return err
-			}
+			// Use params.ForkDigest which handles BPO correctly for Fulu+
+			// This will show the correct digest for the epoch when the fork activates
+			digest := params.ForkDigest(primitives.Epoch(epoch))
 
 			slog.Info(fmt.Sprintf("- %s: 0x%x (epoch %d)", forkName, digest, epoch))
 		}

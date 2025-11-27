@@ -9,8 +9,9 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/OffchainLabs/prysm/v6/network/forks"
-	pb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	pb "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/time/slots"
 	"github.com/ethereum/go-ethereum/crypto/secp256k1"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -93,13 +94,11 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 	defer slog.Info("Stopped disv5 Discovery Service")
 	defer func() { err = terminateSupervisorTreeOnErr(err) }()
 
-	genesisRoot := d.cfg.GenesisConfig.GenesisValidatorRoot
 	genesisTime := d.cfg.GenesisConfig.GenesisTime
 
-	digest, err := forks.CreateForkDigest(genesisTime, genesisRoot)
-	if err != nil {
-		return fmt.Errorf("create fork digest (%s, %x): %w", genesisTime, genesisRoot, err)
-	}
+	currentSlot := slots.CurrentSlot(genesisTime)
+	currentEpoch := slots.ToEpoch(currentSlot)
+	digest := params.ForkDigest(currentEpoch)
 
 	ip := net.ParseIP(d.cfg.Addr)
 
@@ -179,7 +178,7 @@ func (d *Discovery) Serve(ctx context.Context) (err error) {
 			continue
 		}
 		sszEncodedForkEntry := make([]byte, 16)
-		entry := enr.WithEntry(d.cfg.NetworkConfig.ETH2Key, &sszEncodedForkEntry)
+		entry := enr.WithEntry(eth2EnrKey, &sszEncodedForkEntry)
 		if err = node.Record().Load(entry); err != nil {
 			// failed reading eth2 enr entry, likely because it doesn't exist
 			continue

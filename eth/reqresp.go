@@ -14,14 +14,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p"
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p/encoder"
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p/types"
-	psync "github.com/OffchainLabs/prysm/v6/beacon-chain/sync"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/blocks"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/interfaces"
-	"github.com/OffchainLabs/prysm/v6/consensus-types/primitives"
-	pb "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/encoder"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/types"
+	psync "github.com/OffchainLabs/prysm/v7/beacon-chain/sync"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	"github.com/OffchainLabs/prysm/v7/consensus-types/blocks"
+	"github.com/OffchainLabs/prysm/v7/consensus-types/interfaces"
+	"github.com/OffchainLabs/prysm/v7/consensus-types/primitives"
+	pb "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/time/slots"
 	ssz "github.com/ferranbt/fastssz"
 	"github.com/libp2p/go-libp2p/core"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -62,10 +64,15 @@ type ReqResp struct {
 	delegate peer.ID // peer ID that we delegate requests to
 
 	metaDataMu sync.RWMutex
-	metaData   *pb.MetaDataV1
+	metaData   *pb.MetaDataV2 // We store V2 internally to support all fields including CustodyGroupCount
 
+	// Status Storage Strategy:
+	// We store StatusV2 internally (with EarliestAvailableSlot field) to support both v1 and v2 protocols.
+	// - For v1 protocol requests: we convert V2 -> V1 by dropping the extra field
+	// - For v2 protocol requests: we use the full V2 struct
+	// This allows us to maintain backward compatibility while supporting new Fulu/PeerDAS features.
 	statusMu  sync.RWMutex
-	status    *pb.Status
+	status    *pb.StatusV2
 	statusLim *rate.Limiter
 
 	// metrics
@@ -81,10 +88,11 @@ func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 		return nil, fmt.Errorf("req resp server config must not be nil")
 	}
 
-	md := &pb.MetaDataV1{
-		SeqNumber: 0,
-		Attnets:   BitArrayFromAttestationSubnets(cfg.AttestationSubnetConfig.Subnets),
-		Syncnets:  BitArrayFromSyncSubnets(cfg.SyncSubnetConfig.Subnets),
+	md := &pb.MetaDataV2{
+		SeqNumber:         0,
+		Attnets:           BitArrayFromAttestationSubnets(cfg.AttestationSubnetConfig.Subnets),
+		Syncnets:          BitArrayFromSyncSubnets(cfg.SyncSubnetConfig.Subnets),
+		CustodyGroupCount: 0,
 	}
 
 	slog.Info("Composed local MetaData",
@@ -132,14 +140,15 @@ func (r *ReqResp) SetMetaData(seq uint64) {
 		slog.Warn("Updated metadata with lower sequence number", "old", r.metaData.SeqNumber, "new", seq)
 	}
 
-	r.metaData = &pb.MetaDataV1{
-		SeqNumber: seq,
-		Attnets:   r.metaData.Attnets,
-		Syncnets:  r.metaData.Syncnets,
+	r.metaData = &pb.MetaDataV2{
+		SeqNumber:         seq,
+		Attnets:           r.metaData.Attnets,
+		Syncnets:          r.metaData.Syncnets,
+		CustodyGroupCount: r.metaData.CustodyGroupCount,
 	}
 }
 
-func (r *ReqResp) SetStatus(status *pb.Status) {
+func (r *ReqResp) SetStatus(status *pb.StatusV2) {
 	r.statusMu.Lock()
 	defer r.statusMu.Unlock()
 
@@ -170,7 +179,68 @@ func (r *ReqResp) SetStatus(status *pb.Status) {
 	r.status = status
 }
 
+func (r *ReqResp) isFuluOrLater() bool {
+	// Check if we're in Fulu fork or later based on current epoch
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+
+	if r.status == nil {
+		return false
+	}
+
+	// Get current epoch from head slot
+	currentEpoch := slots.ToEpoch(r.status.HeadSlot)
+
+	// Get beacon config to check Fulu fork epoch
+	beaconConfig := params.BeaconConfig()
+
+	// We're in Fulu or later if current epoch is at or past Fulu fork epoch
+	return currentEpoch >= beaconConfig.FuluForkEpoch
+}
+
+// getProtocolID returns the appropriate protocol ID for a given topic name
+// based on the current fork. This centralizes the version selection logic
+// and makes the code cleaner by avoiding scattered isFuluOrLater() checks.
+func (r *ReqResp) getProtocolID(topicName string) protocol.ID {
+	var topic string
+
+	// Determine the correct protocol version based on fork and topic
+	if r.isFuluOrLater() {
+		switch topicName {
+		case "status":
+			topic = p2p.RPCStatusTopicV2
+		case "metadata":
+			topic = p2p.RPCMetaDataTopicV3
+		default:
+			// For topics without Fulu-specific versions, use the provided topic name
+			topic = topicName
+		}
+	} else {
+		// Pre-Fulu: use standard versions
+		switch topicName {
+		case "status":
+			topic = p2p.RPCStatusTopicV1
+		case "metadata":
+			// Altair+ uses v2, Phase0 uses v1
+			// This could be refined further based on specific fork
+			topic = p2p.RPCMetaDataTopicV2
+		default:
+			topic = topicName
+		}
+	}
+
+	// If the topic is already a full protocol path, use it directly
+	if strings.HasPrefix(topic, "/eth2/beacon_chain/req/") {
+		return r.protocolID(topic)
+	}
+
+	// Otherwise return as-is (for backward compatibility)
+	return r.protocolID(topic)
+}
+
 func (r *ReqResp) cpyStatus() *pb.Status {
+	// Helper function to get a v1-compatible Status from our internal StatusV2 storage.
+	// This is used when we need to send v1 status messages to older nodes.
 	r.statusMu.RLock()
 	defer r.statusMu.RUnlock()
 
@@ -178,6 +248,7 @@ func (r *ReqResp) cpyStatus() *pb.Status {
 		return nil
 	}
 
+	// Convert StatusV2 to Status for v1 compatibility by dropping the EarliestAvailableSlot field
 	return &pb.Status{
 		ForkDigest:     bytes.Clone(r.status.ForkDigest),
 		FinalizedRoot:  bytes.Clone(r.status.FinalizedRoot),
@@ -207,8 +278,10 @@ func (r *ReqResp) RegisterHandlers(ctx context.Context) error {
 		p2p.RPCPingTopicV1:                r.pingHandler,
 		p2p.RPCGoodByeTopicV1:             r.goodbyeHandler,
 		p2p.RPCStatusTopicV1:              r.statusHandler,
+		p2p.RPCStatusTopicV2:              r.statusV2Handler,
 		p2p.RPCMetaDataTopicV1:            r.metadataV1Handler,
 		p2p.RPCMetaDataTopicV2:            r.metadataV2Handler,
+		p2p.RPCMetaDataTopicV3:            r.metadataV3Handler,
 		p2p.RPCBlocksByRangeTopicV2:       r.blocksByRangeV2Handler,
 		p2p.RPCBlocksByRootTopicV2:        r.blocksByRootV2Handler,
 		p2p.RPCBlobSidecarsByRangeTopicV1: r.blobsByRangeV2Handler,
@@ -395,8 +468,16 @@ func (r *ReqResp) statusHandler(ctx context.Context, upstream network.Stream) (m
 			return nil, fmt.Errorf("read status data from delegate: %w", err)
 		}
 
-		// update status
-		r.SetStatus(resp)
+		// Convert to StatusV2 for internal storage
+		statusV2 := &pb.StatusV2{
+			ForkDigest:            resp.ForkDigest,
+			FinalizedRoot:         resp.FinalizedRoot,
+			FinalizedEpoch:        resp.FinalizedEpoch,
+			HeadRoot:              resp.HeadRoot,
+			HeadSlot:              resp.HeadSlot,
+			EarliestAvailableSlot: 0, // v1 doesn't have this field
+		}
+		r.SetStatus(statusV2)
 
 		// mirror its own status back
 		if err := r.writeResponse(ctx, upstream, resp); err != nil {
@@ -450,7 +531,16 @@ func (r *ReqResp) statusHandler(ctx context.Context, upstream network.Stream) (m
 		}
 
 		// we got a valid response from our delegate node. Update our own status
-		r.SetStatus(resp)
+		// Convert to StatusV2 for internal storage
+		statusV2 := &pb.StatusV2{
+			ForkDigest:            resp.ForkDigest,
+			FinalizedRoot:         resp.FinalizedRoot,
+			FinalizedEpoch:        resp.FinalizedEpoch,
+			HeadRoot:              resp.HeadRoot,
+			HeadSlot:              resp.HeadSlot,
+			EarliestAvailableSlot: 0, // v1 doesn't have this field
+		}
+		r.SetStatus(statusV2)
 	}
 
 	// let the upstream peer (who initiated the request) know the latest status
@@ -466,7 +556,74 @@ func (r *ReqResp) statusHandler(ctx context.Context, upstream network.Stream) (m
 	return traceData, nil
 }
 
+func (r *ReqResp) statusV2Handler(ctx context.Context, upstream network.Stream) (map[string]any, error) {
+	statusTraceData := func(status *pb.StatusV2) map[string]any {
+		return map[string]any{
+			"ForkDigest":            hex.EncodeToString(status.ForkDigest),
+			"HeadRoot":              hex.EncodeToString(status.HeadRoot),
+			"HeadSlot":              status.HeadSlot,
+			"FinalizedRoot":         hex.EncodeToString(status.FinalizedRoot),
+			"FinalizedEpoch":        status.FinalizedEpoch,
+			"EarliestAvailableSlot": status.EarliestAvailableSlot,
+		}
+	}
+
+	// check if the request comes from our delegate node. If so, just mirror
+	// its own status back and update our latest known status.
+	if upstream.Conn().RemotePeer() == r.delegate {
+
+		resp := &pb.StatusV2{}
+		if err := r.readRequest(ctx, upstream, resp); err != nil {
+			return nil, fmt.Errorf("read status v2 data from delegate: %w", err)
+		}
+
+		// update status
+		r.SetStatus(resp)
+
+		// write the response back to the node
+		if err := r.writeResponse(ctx, upstream, resp); err != nil {
+			return nil, fmt.Errorf("write status v2 to delegate: %w", err)
+		}
+
+		// close stream
+		if err := upstream.Close(); err != nil {
+			return nil, fmt.Errorf("close stream delegate status v2: %w", err)
+		}
+
+		return statusTraceData(resp), nil
+	}
+
+	r.statusMu.RLock()
+	status := r.status
+	r.statusMu.RUnlock()
+
+	// the user pinged us, just deliver our status
+	if err := r.writeResponse(ctx, upstream, status); err != nil {
+		return nil, fmt.Errorf("write status v2: %w", err)
+	}
+
+	// close stream
+	if err := upstream.Close(); err != nil {
+		return nil, fmt.Errorf("close stream status v2: %w", err)
+	}
+
+	req := &pb.StatusV2{}
+	resp := r.status
+
+	traceData := map[string]any{
+		"Request":  statusTraceData(req),
+		"Response": statusTraceData(resp),
+	}
+
+	return traceData, nil
+}
+
 func (r *ReqResp) metadataV1Handler(ctx context.Context, stream network.Stream) (map[string]any, error) {
+	// NOTE: Protocol version vs struct version misalignment in prysm:
+	// - MetadataV1 protocol -> sends MetaDataV0 struct (seq + attnets only)
+	// - MetadataV2 protocol -> sends MetaDataV1 struct (seq + attnets + syncnets)
+	// - MetadataV3 protocol -> sends MetaDataV2 struct (seq + attnets + syncnets + custody)
+	// This is prysm's convention where protocol version is one ahead of struct version.
 	r.metaDataMu.RLock()
 	metaData := &pb.MetaDataV0{
 		SeqNumber: r.metaData.SeqNumber,
@@ -491,6 +648,7 @@ func (r *ReqResp) metadataV1Handler(ctx context.Context, stream network.Stream) 
 }
 
 func (r *ReqResp) metadataV2Handler(ctx context.Context, stream network.Stream) (map[string]any, error) {
+	// NOTE: MetadataV2 protocol sends MetaDataV1 struct (see version misalignment comment in metadataV1Handler)
 	r.metaDataMu.RLock()
 	metaData := &pb.MetaDataV1{
 		SeqNumber: r.metaData.SeqNumber,
@@ -513,6 +671,32 @@ func (r *ReqResp) metadataV2Handler(ctx context.Context, stream network.Stream) 
 		"attnets", metaData.Attnets,
 		"synccommittees", metaData.Syncnets,
 	)
+	return traceData, stream.Close()
+}
+
+func (r *ReqResp) metadataV3Handler(ctx context.Context, stream network.Stream) (map[string]any, error) {
+	// NOTE: MetadataV3 protocol sends MetaDataV2 struct (see version misalignment comment in metadataV1Handler)
+	// V3 adds CustodyGroupCount field for PeerDAS support in Fulu fork
+	r.metaDataMu.RLock()
+	metaData := &pb.MetaDataV2{
+		SeqNumber:         r.metaData.SeqNumber,
+		Attnets:           r.metaData.Attnets,
+		Syncnets:          r.metaData.Syncnets,
+		CustodyGroupCount: r.metaData.CustodyGroupCount,
+	}
+	r.metaDataMu.RUnlock()
+
+	if err := r.writeResponse(ctx, stream, metaData); err != nil {
+		return nil, fmt.Errorf("write meta data v3: %w", err)
+	}
+
+	traceData := map[string]any{
+		"SeqNumber":         metaData.SeqNumber,
+		"Attnets":           hex.EncodeToString(metaData.Attnets.Bytes()),
+		"Syncnets":          hex.EncodeToString(metaData.Syncnets.Bytes()),
+		"CustodyGroupCount": metaData.CustodyGroupCount,
+	}
+
 	return traceData, stream.Close()
 }
 
@@ -643,31 +827,88 @@ func (r *ReqResp) Status(ctx context.Context, pid peer.ID) (status *pb.Status, e
 	}()
 
 	slog.Info("Perform status request", tele.LogAttrPeerID(pid))
-	stream, err := r.host.NewStream(ctx, pid, r.protocolID(p2p.RPCStatusTopicV1))
+	stream, err := r.host.NewStream(ctx, pid, r.getProtocolID("status"))
 	if err != nil {
 		return nil, fmt.Errorf("new stream to peer %s: %w", pid, err)
 	}
 	defer logDeferErr(stream.Reset, "failed closing stream") // no-op if closed
 
 	// actually write the data to the stream
-	req := r.cpyStatus()
-	if req == nil {
-		return nil, fmt.Errorf("status unknown")
-	}
+	if r.isFuluOrLater() {
+		// Send StatusV2 request for Fulu
+		r.statusMu.RLock()
+		if r.status == nil {
+			r.statusMu.RUnlock()
+			return nil, fmt.Errorf("status unknown")
+		}
+		reqV2 := &pb.StatusV2{
+			ForkDigest:            bytes.Clone(r.status.ForkDigest),
+			FinalizedRoot:         bytes.Clone(r.status.FinalizedRoot),
+			FinalizedEpoch:        r.status.FinalizedEpoch,
+			HeadRoot:              bytes.Clone(r.status.HeadRoot),
+			HeadSlot:              r.status.HeadSlot,
+			EarliestAvailableSlot: r.status.EarliestAvailableSlot,
+		}
+		r.statusMu.RUnlock()
 
-	if err := r.writeRequest(ctx, stream, req); err != nil {
-		return nil, fmt.Errorf("write status request: %w", err)
+		if err := r.writeRequest(ctx, stream, reqV2); err != nil {
+			return nil, fmt.Errorf("write status v2 request: %w", err)
+		}
+	} else {
+		// Send StatusV1 request for pre-Fulu
+		req := r.cpyStatus()
+		if req == nil {
+			return nil, fmt.Errorf("status unknown")
+		}
+
+		if err := r.writeRequest(ctx, stream, req); err != nil {
+			return nil, fmt.Errorf("write status request: %w", err)
+		}
 	}
 
 	// read and decode status response
-	resp := &pb.Status{}
-	if err := r.readResponse(ctx, stream, resp); err != nil {
-		return nil, fmt.Errorf("read status response: %w", err)
-	}
+	// Read response based on protocol version
+	var resp *pb.Status
+	if r.isFuluOrLater() {
+		// Read StatusV2 response
+		respV2 := &pb.StatusV2{}
+		if err := r.readResponse(ctx, stream, respV2); err != nil {
+			return nil, fmt.Errorf("read status v2 response: %w", err)
+		}
 
-	// if we requested the status from our delegate
-	if stream.Conn().RemotePeer() == r.delegate {
-		r.SetStatus(resp)
+		// Convert to v1 for return value compatibility
+		resp = &pb.Status{
+			ForkDigest:     respV2.ForkDigest,
+			FinalizedRoot:  respV2.FinalizedRoot,
+			FinalizedEpoch: respV2.FinalizedEpoch,
+			HeadRoot:       respV2.HeadRoot,
+			HeadSlot:       respV2.HeadSlot,
+		}
+
+		// Store the v2 status if from delegate
+		if stream.Conn().RemotePeer() == r.delegate {
+			r.SetStatus(respV2)
+		}
+	} else {
+		// Read StatusV1 response
+		resp = &pb.Status{}
+		if err := r.readResponse(ctx, stream, resp); err != nil {
+			return nil, fmt.Errorf("read status response: %w", err)
+		}
+
+		// if we requested the status from our delegate
+		if stream.Conn().RemotePeer() == r.delegate {
+			// Convert to StatusV2 for internal storage
+			statusV2 := &pb.StatusV2{
+				ForkDigest:            resp.ForkDigest,
+				FinalizedRoot:         resp.FinalizedRoot,
+				FinalizedEpoch:        resp.FinalizedEpoch,
+				HeadRoot:              resp.HeadRoot,
+				HeadSlot:              resp.HeadSlot,
+				EarliestAvailableSlot: 0, // v1 doesn't have this field
+			}
+			r.SetStatus(statusV2)
+		}
 	}
 
 	// we have the data that we want, so ignore error here
@@ -761,16 +1002,32 @@ func (r *ReqResp) MetaData(ctx context.Context, pid peer.ID) (resp *pb.MetaDataV
 	}()
 
 	slog.Debug("Perform metadata request", tele.LogAttrPeerID(pid))
-	stream, err := r.host.NewStream(ctx, pid, r.protocolID(p2p.RPCMetaDataTopicV2))
+	stream, err := r.host.NewStream(ctx, pid, r.getProtocolID("metadata"))
 	if err != nil {
-		return resp, fmt.Errorf("new %s stream to peer %s: %w", p2p.RPCMetaDataTopicV2, pid, err)
+		return resp, fmt.Errorf("new metadata stream to peer %s: %w", pid, err)
 	}
 	defer logDeferErr(stream.Reset, "failed closing stream") // no-op if closed
 
-	// read and decode status response
-	resp = &pb.MetaDataV1{}
-	if err := r.readResponse(ctx, stream, resp); err != nil {
-		return resp, fmt.Errorf("read ping response: %w", err)
+	// read and decode metadata response based on protocol version
+	if r.isFuluOrLater() {
+		// Read MetaDataV2 response for v3 protocol
+		respV2 := &pb.MetaDataV2{}
+		if err := r.readResponse(ctx, stream, respV2); err != nil {
+			return nil, fmt.Errorf("read metadata v3 response: %w", err)
+		}
+
+		// Convert to MetaDataV1 for compatibility
+		resp = &pb.MetaDataV1{
+			SeqNumber: respV2.SeqNumber,
+			Attnets:   respV2.Attnets,
+			Syncnets:  respV2.Syncnets,
+		}
+	} else {
+		// Read MetaDataV1 response for v2 protocol
+		resp = &pb.MetaDataV1{}
+		if err := r.readResponse(ctx, stream, resp); err != nil {
+			return resp, fmt.Errorf("read metadata response: %w", err)
+		}
 	}
 
 	// we have the data that we want, so ignore error here
@@ -1120,6 +1377,15 @@ func (r *ReqResp) getBlockForForkVersion(forkV ForkVersion, encoding encoder.Net
 			return sblk, err
 		}
 		return blocks.NewSignedBeaconBlock(blk)
+
+	case FuluForkVersion:
+		blk := &pb.SignedBeaconBlockFulu{}
+		err = encoding.DecodeWithMaxLength(stream, blk)
+		if err != nil {
+			return sblk, err
+		}
+		return blocks.NewSignedBeaconBlock(blk)
+
 	default:
 		sblk, _ := blocks.NewSignedBeaconBlock(&pb.SignedBeaconBlock{})
 		return sblk, fmt.Errorf("unrecognized fork_version (received:%s) (ours: %s) (global: %s)", forkV, r.cfg.ForkDigest, DenebForkVersion)

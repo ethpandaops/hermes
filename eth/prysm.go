@@ -3,7 +3,6 @@ package eth
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,12 +12,14 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/OffchainLabs/prysm/v6/api/client"
-	apiCli "github.com/OffchainLabs/prysm/v6/api/client/beacon"
-	"github.com/OffchainLabs/prysm/v6/api/server/structs"
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/core/signing"
-	"github.com/OffchainLabs/prysm/v6/network/httputil"
-	eth "github.com/OffchainLabs/prysm/v6/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/api/client"
+	apiCli "github.com/OffchainLabs/prysm/v7/api/client/beacon"
+	"github.com/OffchainLabs/prysm/v7/api/server/structs"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	"github.com/OffchainLabs/prysm/v7/consensus-types/primitives"
+	"github.com/OffchainLabs/prysm/v7/network/httputil"
+	eth "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/time/slots"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 	"go.opentelemetry.io/otel"
@@ -369,16 +370,20 @@ func (p *PrysmClient) isOnNetwork(ctx context.Context, hermesForkDigest [4]byte)
 	}()
 
 	// this checks whether the local fork_digest at hermes matches the one that the remote node keeps
-	// request the genesis
-	nodeFork, err := p.beaconApiClient.GetFork(ctx, apiCli.StateOrBlockId("head"))
+	// Get the chain head to determine the current epoch
+	chainHead, err := p.ChainHead(ctx)
 	if err != nil {
-		return false, fmt.Errorf("request beacon fork to compose forkdigest: %w", err)
+		return false, fmt.Errorf("get chain head: %w", err)
 	}
 
-	forkDigest, err := signing.ComputeForkDigest(nodeFork.CurrentVersion, p.genesis.GenesisValidatorRoot)
-	if err != nil {
-		return false, fmt.Errorf("create fork digest (%s, %x): %w", hex.EncodeToString(nodeFork.CurrentVersion), p.genesis.GenesisValidatorRoot, err)
-	}
+	// Calculate the current epoch from the head slot
+	currentEpoch := slots.ToEpoch(chainHead.HeadSlot)
+
+	// Use params.ForkDigest which handles BPO correctly for Fulu+
+	// We *must* use the current epoch from chain head, not the fork activation
+	// epoch in-order for our fork digests to be valid.
+	forkDigest := params.ForkDigest(currentEpoch)
+
 	// check if our version is within the versions of the node
 	if forkDigest == hermesForkDigest {
 		return true, nil
@@ -404,4 +409,108 @@ func parseErrorResponse(resp *http.Response) error {
 
 		return errResp
 	}
+}
+
+// FetchAndSetBlobSchedule fetches the BLOB_SCHEDULE from Prysm's /eth/v1/config/spec endpoint
+// and sets it in the params configuration to ensure correct fork digest calculation for BPO.
+func (p *PrysmClient) FetchAndSetBlobSchedule(ctx context.Context) error {
+	u := url.URL{
+		Scheme: p.scheme,
+		Host:   fmt.Sprintf("%s:%d", p.host, p.port),
+		Path:   "/eth/v1/config/spec",
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("new spec request: %w", err)
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch spec failed: %w", err)
+	}
+	defer logDeferErr(resp.Body.Close, "Failed closing body")
+
+	if resp.StatusCode != http.StatusOK {
+		return parseErrorResponse(resp)
+	}
+
+	respData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed reading response body: %w", err)
+	}
+
+	// Parse the response to get the spec data
+	var specResp struct {
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &specResp); err != nil {
+		return fmt.Errorf("failed unmarshalling spec response: %w", err)
+	}
+
+	// Check if BLOB_SCHEDULE exists in the spec, if no BLOB_SCHEDULE
+	// that means we're not on a BPO-enabled network.
+	blobScheduleRaw, exists := specResp.Data["BLOB_SCHEDULE"]
+	if !exists {
+		return nil
+	}
+
+	// Parse the BLOB_SCHEDULE.
+	var blobScheduleData []struct {
+		Epoch            string `json:"EPOCH"`
+		MaxBlobsPerBlock string `json:"MAX_BLOBS_PER_BLOCK"`
+	}
+
+	switch v := blobScheduleRaw.(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &blobScheduleData); err != nil {
+			return fmt.Errorf("failed parsing BLOB_SCHEDULE string: %w", err)
+		}
+	case []interface{}:
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Errorf("failed marshaling BLOB_SCHEDULE array: %w", err)
+		}
+
+		if err := json.Unmarshal(jsonBytes, &blobScheduleData); err != nil {
+			return fmt.Errorf("failed parsing BLOB_SCHEDULE array: %w", err)
+		}
+	default:
+		return fmt.Errorf("BLOB_SCHEDULE has unexpected type: %T", blobScheduleRaw)
+	}
+
+	// Convert to BlobScheduleEntry format.
+	blobSchedule := make([]params.BlobScheduleEntry, len(blobScheduleData))
+	for i, entry := range blobScheduleData {
+		epoch, err := strconv.ParseUint(entry.Epoch, 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed parsing EPOCH %s: %w", entry.Epoch, err)
+		}
+
+		maxBlobs, err := strconv.ParseUint(entry.MaxBlobsPerBlock, 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed parsing MAX_BLOBS_PER_BLOCK %s: %w", entry.MaxBlobsPerBlock, err)
+		}
+
+		blobSchedule[i] = params.BlobScheduleEntry{
+			Epoch:            primitives.Epoch(epoch),
+			MaxBlobsPerBlock: maxBlobs,
+		}
+	}
+
+	// Update the beacon config with the BlobSchedule + set GenesisValidatorsRoot.
+	// This is needed so when calling InitializeForkSchedule() it has the
+	// right deetz to calculate correct digests.
+	config := params.BeaconConfig().Copy()
+	config.BlobSchedule = blobSchedule
+	copy(config.GenesisValidatorsRoot[:], p.genesis.GenesisValidatorRoot)
+	config.InitializeForkSchedule()
+
+	// Override the config with updated BlobSchedule.
+	params.OverrideBeaconConfig(config)
+
+	return nil
 }

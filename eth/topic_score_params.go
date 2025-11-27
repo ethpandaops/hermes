@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OffchainLabs/prysm/v6/beacon-chain/p2p"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/probe-lab/hermes/tele"
 )
@@ -67,7 +67,8 @@ func topicToScoreParamsMapper(topic string, activeValidators uint64) *pubsub.Top
 	case strings.Contains(topic, p2p.GossipBlsToExecutionChangeMessage):
 		return defaultBlsToExecutionChangeTopicParams()
 
-	case strings.Contains(topic, p2p.GossipBlobSidecarMessage):
+	case strings.Contains(topic, p2p.GossipBlobSidecarMessage), strings.Contains(topic, p2p.GossipDataColumnSidecarMessage):
+		// Using the same scoring as blocks for blob and data column sidecars (following prysm's approach)
 		return defaultBlockTopicParams()
 
 	default:
